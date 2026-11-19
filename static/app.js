@@ -1,9 +1,12 @@
 (() => {
   let appState = null;
+  let activeModule = "SPORTS"; // "SPORTS" or "HKTEMP"
+  let activeHkTab = "overview"; // "overview" or "records"
   let selectedSport = "ALL";
   let onlyAbove70 = false;
   let searchQuery = "";
   let formDirty = false;
+  let hkFormDirty = false;
   let ws = null;
 
   const $ = (id) => document.getElementById(id);
@@ -33,10 +36,37 @@
     if (!isoStr) return "--:--:--";
     try {
       const d = new Date(isoStr);
-      return d.toLocaleTimeString("zh-HK", { hour12: false });
+      return d.toLocaleTimeString("zh-HK", { timeZone: "Asia/Hong_Kong", hour12: false });
     } catch {
       return isoStr;
     }
+  }
+
+  function fmtDateTimeHkt(isoStr) {
+    if (!isoStr) return "—";
+    try {
+      const d = new Date(isoStr);
+      if (Number.isNaN(d.getTime())) return isoStr;
+      return new Intl.DateTimeFormat("zh-HK", {
+        timeZone: "Asia/Hong_Kong",
+        month: "numeric",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      }).format(d);
+    } catch {
+      return isoStr;
+    }
+  }
+
+  function updateHktClock() {
+    const el = $("header-hkt-clock");
+    if (!el) return;
+    el.textContent = new Date().toLocaleTimeString("zh-HK", {
+      timeZone: "Asia/Hong_Kong",
+      hour12: false,
+    });
   }
 
   function showToast(msg) {
@@ -67,7 +97,7 @@
   function renderState(state) {
     if (!state) return;
     appState = state;
-    const { engine, config, portfolio, clob_status } = state;
+    const { engine, config, portfolio, clob_status, hk_temp } = state;
 
     // 1. Topbar controls
     const wsDot = $("ws-dot");
@@ -98,10 +128,10 @@
     const botLabel = $("bot-toggle-label");
     if (config.bot_enabled) {
       botBtn.className = "btn btn-bot-active";
-      botLabel.textContent = "自動投注：運行中 (ON)";
+      botLabel.textContent = "運動自動投注：運行中 (ON)";
     } else {
       botBtn.className = "btn btn-bot-paused";
-      botLabel.textContent = "自動投注：已暫停 (PAUSED)";
+      botLabel.textContent = "運動自動投注：已暫停 (PAUSED)";
     }
 
     // 2. KPI Cards
@@ -148,7 +178,7 @@
     $("kpi-active-rule-summary").textContent = `條件：勝率 ${Math.round(config.min_win_prob * 100)}% ~ ${Math.round(config.max_win_prob * 100)}% 立即買入 $${config.bet_amount_usdc} USDC`;
     $("last-scan-timestamp").textContent = `最後更新：${fmtTime(engine.last_scan_at)}`;
 
-    // 3. Strategy Form (only populate if user isn't currently editing)
+    // 3. Strategy Form
     if (!formDirty) {
       $("cfg-min-prob").value = (config.min_win_prob * 100).toFixed(1).replace(/\.0$/, "");
       $("cfg-max-prob").value = (config.max_win_prob * 100).toFixed(1).replace(/\.0$/, "");
@@ -175,10 +205,210 @@
       $("clob-sig-type").value = String(clob_status.signature_type ?? 1);
     }
 
-    // 5. Render Markets, Positions, and Logs
+    // 5. Render Sports Markets, Positions, Logs, and HK Temperature Module
     renderMarketsTable(state.markets || [], config);
     renderPositions(state.open_positions || [], state.closed_positions || []);
     renderLogs(state.logs || []);
+    if (hk_temp) {
+      renderHkTempModule(hk_temp);
+    }
+  }
+
+  function renderHkTempModule(hk) {
+    const curr = hk.current || {};
+    const fc = hk.forecast || {};
+    const eng = hk.engine || {};
+    const sum = hk.summary || {};
+    const mkt = hk.market || {};
+
+    // Top badges
+    const navBadge = $("hktemp-nav-badge");
+    if (navBadge) {
+      navBadge.textContent = curr.tempC != null ? `${curr.tempC}°C` : "氣溫";
+    }
+
+    const obsBadge = $("hk-obs-status-badge");
+    if (obsBadge) {
+      obsBadge.textContent = hk.observatoryState === "live" ? "天文臺：即時" : "天文臺：延遲";
+      obsBadge.className = `badge ${hk.observatoryState === "live" ? "badge-success" : "badge-warn"}`;
+    }
+
+    const polyBadge = $("hk-poly-status-badge");
+    if (polyBadge) {
+      polyBadge.textContent = hk.polymarketState === "live" ? "Polymarket：即時連線" : "Polymarket：中斷";
+      polyBadge.className = `badge ${hk.polymarketState === "live" ? "badge-accent" : "badge-danger"}`;
+    }
+
+    // Phase Banner
+    const phaseBox = $("hk-phase-banner");
+    if (phaseBox) {
+      phaseBox.className = `hk-phase-box phase-${eng.phase || "monitoring"}`;
+    }
+    $("hk-phase-label").textContent = eng.phaseLabel || "監測中";
+    $("hk-phase-message").textContent = eng.message || "";
+
+    // Weather KPI Cards
+    $("hk-current-temp").textContent = curr.tempC != null ? `${curr.tempC}°C` : "—";
+    const staleBadge = $("hk-current-stale-badge");
+    if (curr.stale) {
+      staleBadge.textContent = `延遲 (${curr.ageMinutes} 分鐘前)`;
+      staleBadge.className = "badge badge-warn";
+    } else {
+      staleBadge.textContent = "即時觀測";
+      staleBadge.className = "badge badge-success";
+    }
+    $("hk-current-detail").textContent = `觀測時間 ${fmtDateTimeHkt(curr.recordTime)} · 測站：${curr.place || "香港天文臺"}`;
+
+    $("hk-forecast-date").textContent = `預報 ${fc.forecastDate || hk.marketDate}`;
+    $("hk-forecast-temp").textContent =
+      fc.maxC != null ? `最高 ${fc.maxC}°C` + (fc.minC != null ? ` / 最低 ${fc.minC}°C` : "") : "—";
+    $("hk-forecast-desc").textContent = fc.weather || "香港天文臺本港地區天氣預報";
+
+    $("hk-official-max").textContent = hk.officialMax?.label || "觀測中";
+    $("hk-max-time").textContent = hk.maxTime?.label || "—";
+    $("hk-max-time-note").textContent = hk.maxTime?.annotation || "午夜至今最高氣溫首次出現時間";
+
+    $("hk-mode-tag").textContent = eng.mode === "live" ? "實盤 (LIVE)" : "模擬盤 (PAPER)";
+    $("hk-balance-val").textContent = fmtUsd(eng.paperCash);
+    $("hk-open-count").textContent = String(sum.openCount ?? 0);
+    $("hk-exposure-val").textContent = `${Number(sum.exposureUsdc || 0).toFixed(2)} USDC`;
+
+    // HK Temp Control Form
+    const autoBtn = $("hk-auto-toggle-btn");
+    if (eng.autoEnabled) {
+      autoBtn.className = "btn btn-bot-active";
+      autoBtn.textContent = "🤖 自動交易已開啟（點擊停止自動交易）";
+    } else {
+      autoBtn.className = "btn btn-bot-paused";
+      autoBtn.textContent = "⏸️ 自動交易已停止（點擊開始自動交易）";
+    }
+
+    if (!hkFormDirty) {
+      $("hk-mode-select").value = (eng.mode || "paper").toUpperCase();
+      $("hk-stake-input").value = eng.stakeUsdc ?? 10;
+      $("hk-pricemin-input").value = Math.round((eng.priceMin ?? 0.75) * 100);
+      $("hk-gatehour-input").value = hk.gateHour ?? 11;
+    }
+    $("hk-rule-hour-text").textContent = `${String(hk.gateHour ?? 11).padStart(2, "0")}:00`;
+    $("hk-rule-prob-text").textContent = `${Math.round((eng.priceMin ?? 0.75) * 100)}%`;
+
+    // Market Title & Temperature Outcomes
+    $("hk-market-title").textContent = `${mkt.title || "Highest temperature in Hong Kong"} (${hk.marketDate})`;
+    const mktBadge = $("hk-market-status-badge");
+    mktBadge.textContent = mkt.statusLabel || "開放";
+    mktBadge.className = `badge ${mkt.status === "open" ? "badge-success" : "badge-warn"}`;
+
+    const outcomesEl = $("hk-outcomes-container");
+    const outcomes = mkt.outcomes || [];
+    const priceMin = Number(eng.priceMin ?? 0.75);
+    const stakeVal = Number(eng.stakeUsdc ?? 10);
+
+    if (outcomes.length === 0) {
+      outcomesEl.innerHTML = `<div class="empty-cell">找不到今日「香港最高氣溫」市場選項，可能尚未開市。</div>`;
+    } else {
+      outcomesEl.innerHTML = outcomes
+        .map((o) => {
+          const askPct = (Number(o.execPrice || 0) * 100).toFixed(1);
+          const barWidth = Math.max(1, Math.min(100, Number(o.execPrice || 0) * 100)).toFixed(1);
+          const markerLeft = Math.max(5, Math.min(99, priceMin * 100)).toFixed(1);
+          const cardClass = o.inBand ? "hk-outcome-card hk-in-band" : "hk-outcome-card";
+          const badgeClass =
+            o.badgeVariant === "hit"
+              ? "badge-success"
+              : o.badgeVariant === "near" || o.badgeVariant === "standby"
+              ? "badge-warn"
+              : "badge-outline";
+
+          return `
+            <div class="${cardClass}">
+              <div class="hk-outcome-top">
+                <div>
+                  <div class="hk-outcome-name">${escapeHtml(o.name)}</div>
+                  <div class="hk-outcome-q">${escapeHtml(o.question)}</div>
+                </div>
+                <div>
+                  <div class="hk-outcome-price ${o.inBand ? "pnl-pos" : ""}">${askPct}%</div>
+                  <div style="font-size:10.5px;color:var(--text-muted);text-align:right;">
+                    ${o.quoteSource === "clob" ? "CLOB 最佳賣價" : "參考報價"}
+                  </div>
+                </div>
+              </div>
+
+              <div class="hk-bar-wrap" title="紅線為 ${Math.round(priceMin * 100)}% 觸發門檻">
+                <div class="hk-bar-fill" style="width:${barWidth}%"></div>
+                <span class="hk-threshold-marker" style="left:${markerLeft}%"></span>
+              </div>
+
+              <div class="hk-outcome-foot">
+                <span class="badge ${badgeClass}">${escapeHtml(o.badgeLabel)}</span>
+                <span>買 ${(Number(o.bestBid || 0) * 100).toFixed(1)}% / 賣 ${(Number(o.bestAsk || 0) * 100).toFixed(1)}%</span>
+                <button
+                  type="button"
+                  class="btn btn-xs btn-bet-now hk-manual-bet-btn"
+                  data-outcome-name="${escapeHtml(o.name)}"
+                >
+                  ⚡ 投注 $${stakeVal}
+                </button>
+              </div>
+            </div>
+          `;
+        })
+        .join("");
+    }
+
+    // HK Trades Table
+    const tradesTbody = $("hk-trades-tbody");
+    const trades = hk.trades || [];
+    if (trades.length === 0) {
+      tradesTbody.innerHTML = `<tr><td colspan="10" class="empty-cell">目前沒有香港氣溫市場的委託紀錄。當香港時間 ${String(hk.gateHour ?? 11).padStart(2, "0")}:00 後選項達到 ${Math.round(priceMin * 100)}% 時將自動下單。</td></tr>`;
+    } else {
+      tradesTbody.innerHTML = trades
+        .map((t) => {
+          const pnl = Number(t.pnl_usdc || 0);
+          return `
+            <tr>
+              <td>${escapeHtml(fmtDateTimeHkt(t.created_at))}</td>
+              <td><span class="badge badge-outline">${t.mode === "live" ? "實盤" : "模擬"}</span></td>
+              <td>${escapeHtml(t.market_date)}</td>
+              <td><strong>${escapeHtml(t.outcome_name)}</strong></td>
+              <td>${(Number(t.price) * 100).toFixed(1)}%</td>
+              <td>${(Number(t.current_price) * 100).toFixed(1)}%</td>
+              <td>$${Number(t.stake_usdc).toFixed(2)}</td>
+              <td>${Number(t.size_shares).toFixed(2)}</td>
+              <td>${t.status === "filled" ? "✅ 已成交" : escapeHtml(t.status)}</td>
+              <td class="${pnl >= 0 ? "pnl-pos" : "pnl-neg"}">${fmtUsd(pnl, true)}</td>
+            </tr>
+          `;
+        })
+        .join("");
+    }
+
+    // Historical Weather Comparison Table
+    const weatherTbody = $("hk-weather-records-tbody");
+    const records = hk.weatherRecords || [];
+    if (records.length === 0) {
+      weatherTbody.innerHTML = `<tr><td colspan="6" class="empty-cell">尚無歷史天氣對照資料</td></tr>`;
+    } else {
+      weatherTbody.innerHTML = records
+        .map((r) => {
+          const fcStr = r.forecastMaxC != null ? `${Number(r.forecastMaxC).toFixed(1).replace(/\.0$/, "")}°C` : "—";
+          const errStr =
+            r.forecastErrorC != null
+              ? `${r.forecastErrorC > 0 ? "+" : ""}${Number(r.forecastErrorC).toFixed(1)}°C`
+              : "—";
+          return `
+            <tr>
+              <td><strong>${escapeHtml(r.marketDate)}</strong></td>
+              <td>${escapeHtml(fcStr)}</td>
+              <td>${escapeHtml(fmtDateTimeHkt(r.forecastIssuedAt))}</td>
+              <td><span class="badge ${r.officialLabel === "觀測中" ? "badge-warn" : "badge-success"}">${escapeHtml(r.officialLabel || "—")}</span></td>
+              <td>${escapeHtml(r.awsTimeLabel || "—")}</td>
+              <td>${escapeHtml(errStr)}</td>
+            </tr>
+          `;
+        })
+        .join("");
+    }
   }
 
   function renderMarketsTable(markets, config) {
@@ -296,7 +526,6 @@
       openEl.innerHTML = openPositions
         .map((p) => {
           const pnl = Number(p.unrealized_pnl_usdc || 0);
-          const pnlClass = pnl >= 0 ? "pnl-pos" : "pnl-neg";
           return `
             <div class="position-card">
               <div class="pos-top">
@@ -318,10 +547,10 @@
                 <button type="button" class="btn btn-xs btn-outline pos-close-btn" data-id="${p.id}" data-action="MARKET_CLOSE">
                   市價平倉
                 </button>
-                <button type="button" class="btn btn-xs btn-bet-now pos-close-btn" data-id="${p.id}" data-action="SETTLE_WIN" title="模擬該球隊最終贏得比賽 (以 100¢ 結算)">
+                <button type="button" class="btn btn-xs btn-bet-now pos-close-btn" data-id="${p.id}" data-action="SETTLE_WIN">
                   🏆 勝出結算 (100¢)
                 </button>
-                <button type="button" class="btn btn-xs btn-ghost pos-close-btn" data-id="${p.id}" data-action="SETTLE_LOSS" title="模擬該球隊落敗 (以 0¢ 結算)">
+                <button type="button" class="btn btn-xs btn-ghost pos-close-btn" data-id="${p.id}" data-action="SETTLE_LOSS">
                   落敗 (0¢)
                 </button>
               </div>
@@ -399,13 +628,106 @@
   }
 
   function bindEvents() {
-    // Track form dirty state
+    // Primary Module Switcher (Sports vs HK Temperature)
+    $("module-sports-btn").addEventListener("click", () => {
+      activeModule = "SPORTS";
+      $("module-sports-btn").classList.add("active");
+      $("module-hktemp-btn").classList.remove("active");
+      $("view-sports").classList.remove("hidden");
+      $("view-hktemp").classList.add("hidden");
+    });
+
+    $("module-hktemp-btn").addEventListener("click", () => {
+      activeModule = "HKTEMP";
+      $("module-hktemp-btn").classList.add("active");
+      $("module-sports-btn").classList.remove("active");
+      $("view-hktemp").classList.remove("hidden");
+      $("view-sports").classList.add("hidden");
+    });
+
+    // HK Temp Sub-navigation (Overview vs Records)
+    document.querySelectorAll(".subnav-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".subnav-btn").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        activeHkTab = btn.dataset.hktab || "overview";
+        if (activeHkTab === "records") {
+          $("hktab-records").classList.remove("hidden");
+          $("hktab-overview").classList.add("hidden");
+        } else {
+          $("hktab-overview").classList.remove("hidden");
+          $("hktab-records").classList.add("hidden");
+        }
+      });
+    });
+
+    // HK Temp form dirty tracking
+    ["hk-mode-select", "hk-stake-input", "hk-pricemin-input", "hk-gatehour-input"].forEach((id) => {
+      const el = $(id);
+      if (el) {
+        el.addEventListener("input", () => {
+          hkFormDirty = true;
+        });
+      }
+    });
+
+    // HK Temp Auto-Toggle
+    $("hk-auto-toggle-btn").addEventListener("click", async () => {
+      const currEnabled = Boolean(appState?.hk_temp?.engine?.autoEnabled);
+      try {
+        const res = await apiPost("/api/hk-temp/config", { auto_enabled: !currEnabled });
+        renderState(res.state);
+        showToast(!currEnabled ? "🌡️ 香港氣溫 75%+ 自動交易已啟動！" : "⏸️ 香港氣溫自動交易已停止");
+      } catch (err) {
+        showToast(`❌ ${err.message}`);
+      }
+    });
+
+    // HK Temp Save Config
+    $("hk-save-cfg-btn").addEventListener("click", async () => {
+      try {
+        const payload = {
+          mode: $("hk-mode-select").value,
+          stake_usdc: Number($("hk-stake-input").value),
+          price_min: Number($("hk-pricemin-input").value) / 100.0,
+          gate_hour_hkt: Number($("hk-gatehour-input").value),
+        };
+        const res = await apiPost("/api/hk-temp/config", payload);
+        hkFormDirty = false;
+        renderState(res.state);
+        showToast("✅ 香港氣溫交易設定已儲存並立即生效！");
+      } catch (err) {
+        showToast(`❌ ${err.message}`);
+        if (err.message.includes("CLOB")) {
+          $("clob-modal").showModal();
+        }
+      }
+    });
+
+    // HK Temp Manual Bet Button Delegation
+    $("hk-outcomes-container").addEventListener("click", async (e) => {
+      const btn = e.target.closest(".hk-manual-bet-btn");
+      if (!btn) return;
+      btn.disabled = true;
+      try {
+        const res = await apiPost("/api/hk-temp/bet", {
+          outcome_name: btn.dataset.outcomeName,
+        });
+        renderState(res.state);
+        showToast(`🌡️ 已投注香港最高氣溫選項「${btn.dataset.outcomeName}」！`);
+      } catch (err) {
+        showToast(`❌ 下單失敗：${err.message}`);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    // Sports Strategy Form
     const form = $("strategy-form");
     form.addEventListener("input", () => {
       formDirty = true;
     });
 
-    // Save config button
     $("save-config-btn").addEventListener("click", async () => {
       try {
         const payload = {
@@ -425,29 +747,28 @@
         const res = await apiPost("/api/config", payload);
         formDirty = false;
         renderState(res.state);
-        showToast("✅ 策略與風控規則已儲存並立即生效！");
+        showToast("✅ 運動策略與風控規則已儲存並立即生效！");
       } catch (err) {
         showToast(`❌ 儲存失敗：${err.message}`);
       }
     });
 
-    // Bot Enable/Pause Toggle
     $("bot-toggle-btn").addEventListener("click", async () => {
       if (!appState) return;
       try {
         const nextState = !appState.config.bot_enabled;
         const res = await apiPost("/api/config", { bot_enabled: nextState });
         renderState(res.state);
-        showToast(nextState ? "🤖 70%+ 自動投注機器人已啟動！" : "⏸️ 自動投注機器人已暫停");
+        showToast(nextState ? "🤖 運動 70%+ 自動投注機器人已啟動！" : "⏸️ 運動自動投注機器人已暫停");
       } catch (err) {
         showToast(`❌ 操作失敗：${err.message}`);
       }
     });
 
-    // Mode Switch (Paper vs Live)
     $("mode-paper-btn").addEventListener("click", async () => {
       try {
         const res = await apiPost("/api/config", { trading_mode: "PAPER" });
+        await apiPost("/api/hk-temp/config", { mode: "PAPER" });
         renderState(res.state);
         showToast("🧪 已切換為「模擬交易 (Paper Trading)」模式");
       } catch (err) {
@@ -458,6 +779,7 @@
     $("mode-live-btn").addEventListener("click", async () => {
       try {
         const res = await apiPost("/api/config", { trading_mode: "LIVE" });
+        await apiPost("/api/hk-temp/config", { mode: "LIVE" });
         renderState(res.state);
         showToast("⚡ 已切換為「Polymarket CLOB 真實自動下單」模式");
       } catch (err) {
@@ -466,7 +788,6 @@
       }
     });
 
-    // Data source switcher
     $("data-source-select").addEventListener("change", async (e) => {
       try {
         const res = await apiPost("/api/config", { data_source_mode: e.target.value });
@@ -477,7 +798,6 @@
       }
     });
 
-    // Simulate 70%+ Breakout Button
     $("sim-breakout-btn").addEventListener("click", async () => {
       try {
         const res = await apiPost("/api/simulate-breakout");
@@ -489,29 +809,26 @@
       }
     });
 
-    // Manual Scan
     $("manual-scan-btn").addEventListener("click", async () => {
       try {
         const res = await apiPost("/api/scan");
         renderState(res.state);
-        showToast("🔄 已完成即時盤口掃描");
+        showToast("🔄 已完成運動與香港氣溫盤口即時掃描");
       } catch (err) {
         showToast(`❌ ${err.message}`);
       }
     });
 
-    // Reset Paper Account
     $("reset-paper-btn").addEventListener("click", async () => {
       try {
         const res = await apiPost("/api/portfolio/reset", { initial_balance: 1000 });
         renderState(res.state);
-        showToast("🔄 模擬帳戶已重置為 $1,000.00 USDC，可重新測試策略");
+        showToast("🔄 模擬帳戶已重置為 $1,000.00 USDC");
       } catch (err) {
         showToast(`❌ ${err.message}`);
       }
     });
 
-    // Sport Category Tabs
     $("sport-tabs").addEventListener("click", (e) => {
       const btn = e.target.closest(".sport-tab");
       if (!btn) return;
@@ -521,7 +838,6 @@
       if (appState) renderMarketsTable(appState.markets || [], appState.config);
     });
 
-    // Filter >= 70% & Search
     $("filter-only-70").addEventListener("change", (e) => {
       onlyAbove70 = e.target.checked;
       if (appState) renderMarketsTable(appState.markets || [], appState.config);
@@ -532,7 +848,6 @@
       if (appState) renderMarketsTable(appState.markets || [], appState.config);
     });
 
-    // Delegate Manual Bet button clicks in table
     $("markets-tbody").addEventListener("click", async (e) => {
       const btn = e.target.closest(".manual-bet-btn");
       if (!btn) return;
@@ -551,7 +866,6 @@
       }
     });
 
-    // Delegate Position Close/Settle clicks
     $("open-positions-view").addEventListener("click", async (e) => {
       const btn = e.target.closest(".pos-close-btn");
       if (!btn) return;
@@ -569,7 +883,6 @@
       }
     });
 
-    // Open / Closed Positions Tabs
     $("tab-open-pos-btn").addEventListener("click", () => {
       $("tab-open-pos-btn").classList.add("active");
       $("tab-closed-pos-btn").classList.remove("active");
@@ -584,7 +897,6 @@
       $("open-positions-view").classList.add("hidden");
     });
 
-    // Modals (CLOB & Deploy Guide)
     const clobModal = $("clob-modal");
     $("open-clob-modal-btn").addEventListener("click", () => clobModal.showModal());
     $("close-clob-modal-btn").addEventListener("click", () => clobModal.close());
@@ -593,7 +905,6 @@
     $("open-deploy-modal-btn").addEventListener("click", () => deployModal.showModal());
     $("close-deploy-modal-btn").addEventListener("click", () => deployModal.close());
 
-    // Save CLOB credentials
     $("clob-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       try {
@@ -614,12 +925,10 @@
       }
     });
 
-    // Verify CLOB Connection
     $("verify-clob-btn").addEventListener("click", async () => {
       const banner = $("clob-verify-banner");
       banner.textContent = "⏳ 正在驗證 Polymarket CLOB 憑證與連線...";
       try {
-        // Save first if user typed a new private key
         if ($("clob-private-key").value.trim()) {
           await apiPost("/api/clob/credentials", {
             private_key: $("clob-private-key").value,
@@ -638,6 +947,8 @@
   }
 
   async function init() {
+    updateHktClock();
+    setInterval(updateHktClock, 1000);
     bindEvents();
     try {
       const resp = await fetch("/api/state");

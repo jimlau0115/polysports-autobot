@@ -230,6 +230,50 @@ class PolySportsServer:
         result = await self.poly_client.verify_clob_credentials(creds)
         return web.json_response(result)
 
+    # --- Hong Kong Daily Temperature 75%+ Auto-Trading Handlers ---
+    async def handle_hk_temp_state(self, request: web.Request) -> web.Response:
+        data = await self.engine.hk_temp.scan_and_evaluate()
+        return web.json_response({"ok": True, "hk_temp": data})
+
+    async def handle_hk_temp_config(self, request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "Invalid JSON"}, status=400)
+
+        if str(body.get("mode", "")).upper() == "LIVE":
+            clob_status = self.db.get_masked_clob_credentials()
+            if not clob_status.get("ready_for_live"):
+                return web.json_response(
+                    {
+                        "ok": False,
+                        "error": "切換至「實盤 (LIVE)」前，請先在右上角「CLOB 錢包設定」填入 Polygon 私鑰。",
+                    },
+                    status=400,
+                )
+
+        cfg = self.engine.hk_temp.update_config(body)
+        await self.engine.hk_temp.scan_and_evaluate()
+        state = self.engine.get_full_state()
+        await self.broadcast_ws({"type": "STATE_UPDATE", "data": state})
+        return web.json_response({"ok": True, "config": cfg, "state": state})
+
+    async def handle_hk_temp_bet(self, request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+            outcome_name = str(body["outcome_name"])
+            stake = body.get("stake_usdc")
+            trade = await self.engine.hk_temp.execute_manual_hk_bet(
+                outcome_name=outcome_name,
+                stake_usdc=float(stake) if stake is not None else None,
+            )
+            await self.engine.hk_temp.scan_and_evaluate()
+            state = self.engine.get_full_state()
+            await self.broadcast_ws({"type": "STATE_UPDATE", "data": state})
+            return web.json_response({"ok": True, "trade": trade, "state": state})
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
     async def handle_ws(self, request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse(heartbeat=25.0)
         await ws.prepare(request)
@@ -266,6 +310,9 @@ def create_app() -> web.Application:
     app.router.add_post("/api/portfolio/reset", srv.handle_reset_portfolio)
     app.router.add_post("/api/clob/credentials", srv.handle_save_clob_credentials)
     app.router.add_post("/api/clob/verify", srv.handle_verify_clob)
+    app.router.add_get("/api/hk-temp/state", srv.handle_hk_temp_state)
+    app.router.add_post("/api/hk-temp/config", srv.handle_hk_temp_config)
+    app.router.add_post("/api/hk-temp/bet", srv.handle_hk_temp_bet)
     app.router.add_get("/ws", srv.handle_ws)
     app.router.add_static("/static/", path=str(STATIC_DIR), name="static")
     return app

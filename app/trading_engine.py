@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Coroutine, Dict, List, Optional
 
 from app.database import Database, utc_now_iso
+from app.hk_temp_engine import HkTempEngine
 from app.polymarket_client import PolymarketClient
 
 
@@ -11,6 +12,7 @@ class TradingEngine:
     def __init__(self, db: Database, poly_client: PolymarketClient) -> None:
         self.db = db
         self.poly_client = poly_client
+        self.hk_temp = HkTempEngine(db, poly_client)
         self.latest_markets: List[Dict[str, Any]] = []
         self.active_data_source: str = "INITIALIZING"
         self.last_scan_at: Optional[str] = None
@@ -118,6 +120,16 @@ class TradingEngine:
                         # Refresh config & evaluation badge after bet
                         cfg = self.db.get_config()
                         m_cand["rule_evaluation"] = self._evaluate_market(m_cand, cfg)
+
+            # 4. Also scan and evaluate Hong Kong Daily Temperature 75%+ Auto-Trading
+            try:
+                await self.hk_temp.scan_and_evaluate()
+            except Exception as exc:
+                self.db.add_log(
+                    level="WARN",
+                    trading_mode=trading_mode,
+                    message=f"香港氣溫市場掃描異常: {exc}",
+                )
 
             self.scan_count += 1
             self.last_scan_at = utc_now_iso()
@@ -517,4 +529,5 @@ class TradingEngine:
             "open_positions": open_positions,
             "closed_positions": closed_positions,
             "logs": logs,
+            "hk_temp": self.hk_temp.last_dashboard_data,
         }
