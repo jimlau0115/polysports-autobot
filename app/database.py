@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from app.config import DB_PATH, DEFAULT_BOT_CONFIG, get_env_clob_credentials
+from app.polymarket_client import normalize_event_key
 
 
 def utc_now_iso() -> str:
@@ -113,6 +114,41 @@ class Database:
                     ("clob_credentials", json.dumps(env_creds), utc_now_iso()),
                 )
 
+            # One-time deduplication of any duplicate positions on the same sports event/item
+            dedup_row = conn.execute("SELECT value FROM settings WHERE key = 'dedup_positions_by_event_v2'").fetchone()
+            if not dedup_row:
+                all_pos = conn.execute("SELECT * FROM positions ORDER BY id ASC").fetchall()
+                seen_keys = set()
+                dup_ids = []
+                refund_cash = 0.0
+                for p in all_pos:
+                    ev_key = normalize_event_key(p["event_title"], p["market_slug"])
+                    if not ev_key:
+                        ev_key = str(p["market_id"])
+                    is_old_future = "end of 2026" in ev_key or "2027 champion" in ev_key
+                    if ev_key in seen_keys or (is_old_future and p["trading_mode"] == "PAPER"):
+                        dup_ids.append(p["id"])
+                        if p["status"] == "OPEN" and p["trading_mode"] == "PAPER":
+                            refund_cash += float(p["amount_usdc"] or 0.0)
+                    else:
+                        seen_keys.add(ev_key)
+                if dup_ids:
+                    placeholders = ",".join("?" for _ in dup_ids)
+                    conn.execute(f"DELETE FROM positions WHERE id IN ({placeholders})", dup_ids)
+                    if refund_cash > 0:
+                        cfg_r = conn.execute("SELECT value FROM settings WHERE key = 'bot_config'").fetchone()
+                        if cfg_r:
+                            cfg_obj = json.loads(cfg_r["value"])
+                            cfg_obj["paper_cash_balance"] = round(float(cfg_obj.get("paper_cash_balance", 1000.0)) + refund_cash, 2)
+                            conn.execute(
+                                "UPDATE settings SET value = ?, updated_at = ? WHERE key = 'bot_config'",
+                                (json.dumps(cfg_obj), utc_now_iso()),
+                            )
+                conn.execute(
+                    "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
+                    ("dedup_positions_by_event_v2", "true", utc_now_iso()),
+                )
+
     def get_config(self) -> Dict[str, Any]:
         with self._connect() as conn:
             row = conn.execute("SELECT value FROM settings WHERE key = 'bot_config'").fetchone()
@@ -217,17 +253,34 @@ class Database:
             )
         return self.get_masked_clob_credentials()
 
-    def has_bet_on_market(self, market_id: str, condition_id: str) -> bool:
+    def has_bet_on_market(
+        self,
+        market_id: str,
+        condition_id: str,
+        market_slug: str = "",
+        event_title: str = "",
+    ) -> bool:
+        target_ev_key = normalize_event_key(event_title, market_slug)
         with self._connect() as conn:
             row = conn.execute(
                 """
                 SELECT 1 FROM positions
-                WHERE (market_id = ? OR (condition_id != '' AND condition_id = ?))
+                WHERE market_id = ?
+                   OR (condition_id != '' AND condition_id = ?)
+                   OR (? != '' AND LOWER(TRIM(market_slug)) = LOWER(TRIM(?)))
+                   OR (? != '' AND LOWER(TRIM(event_title)) = LOWER(TRIM(?)))
                 LIMIT 1
                 """,
-                (market_id, condition_id),
+                (market_id, condition_id, market_slug, market_slug, event_title, event_title),
             ).fetchone()
-            return row is not None
+            if row is not None:
+                return True
+            if target_ev_key:
+                all_rows = conn.execute("SELECT event_title, market_slug FROM positions").fetchall()
+                for r in all_rows:
+                    if normalize_event_key(r["event_title"], r["market_slug"]) == target_ev_key:
+                        return True
+            return False
 
     def get_today_spend_usdc(self, trading_mode: Optional[str] = None) -> float:
         prefix = today_utc_prefix()

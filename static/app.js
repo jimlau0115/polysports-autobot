@@ -58,6 +58,33 @@
     }
   }
 
+  function fmtEndCountdown(isoStr) {
+    if (!isoStr) return "結束時間：未定";
+    try {
+      const d = new Date(isoStr);
+      if (Number.isNaN(d.getTime())) return `結束時間：${isoStr}`;
+      const hktStr = fmtDateTimeHkt(isoStr);
+      const diffMs = d.getTime() - Date.now();
+      const diffMin = Math.round(diffMs / 60000);
+      if (diffMin <= 0) {
+        return `🔴 進行中 / 即將結算 (${hktStr} HKT)`;
+      }
+      if (diffMin < 60) {
+        return `⏱️ ${diffMin} 分鐘後結束 (${hktStr} HKT)`;
+      }
+      if (diffMin < 1440) {
+        const hrs = Math.floor(diffMin / 60);
+        const mins = diffMin % 60;
+        return `⏱️ ${hrs} 小時 ${mins} 分後結束 (${hktStr} HKT)`;
+      }
+      const days = Math.floor(diffMin / 1440);
+      const remHrs = Math.floor((diffMin % 1440) / 60);
+      return `⏱️ ${days} 天 ${remHrs} 小時後結束 (${hktStr} HKT)`;
+    } catch {
+      return `結束時間：${isoStr}`;
+    }
+  }
+
   function updateHktClock() {
     const el = $("header-hkt-clock");
     if (!el) return;
@@ -480,12 +507,17 @@
           .join("");
 
         const topOutcome = m.top_outcome || m.outcomes?.[0] || { index: 0, label: "Yes", prob: 0 };
+        const endCountdownStr = fmtEndCountdown(m.end_date);
+        const isAlreadyBet = Boolean(ev.already_bet || ev.status_code === "ALREADY_BET");
 
         return `
           <tr class="${rowClass}">
             <td>
               <div class="market-meta">
-                <span class="sport-chip">${escapeHtml(m.sport_icon)} ${escapeHtml(m.sport_label)}</span>
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                  <span class="sport-chip">${escapeHtml(m.sport_icon)} ${escapeHtml(m.sport_label)}</span>
+                  <span class="badge badge-outline" style="font-size:11px;color:#93c5fd;">${escapeHtml(endCountdownStr)}</span>
+                </div>
                 <a class="market-title-link" href="${escapeHtml(m.polymarket_url)}" target="_blank" rel="noopener">
                   ${escapeHtml(m.event_title)} ↗
                 </a>
@@ -513,12 +545,13 @@
             <td class="text-right">
               <button
                 type="button"
-                class="btn btn-xs btn-bet-now manual-bet-btn"
+                class="btn btn-xs ${isAlreadyBet ? "btn-ghost" : "btn-bet-now"} manual-bet-btn"
                 data-market-id="${escapeHtml(m.market_id)}"
                 data-outcome-index="${Number(topOutcome.index || 0)}"
                 data-outcome-label="${escapeHtml(topOutcome.label)}"
+                ${isAlreadyBet ? "disabled title='同一個運動項目只進行一次投注'" : ""}
               >
-                ⚡ 買入「${escapeHtml(topOutcome.label)}」($${betAmt})
+                ${isAlreadyBet ? "✅ 同項目已投注" : `⚡ 買入「${escapeHtml(topOutcome.label)}」($${betAmt})`}
               </button>
             </td>
           </tr>

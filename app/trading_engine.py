@@ -5,7 +5,7 @@ from typing import Any, Callable, Coroutine, Dict, List, Optional
 
 from app.database import Database, utc_now_iso
 from app.hk_temp_engine import HkTempEngine
-from app.polymarket_client import PolymarketClient
+from app.polymarket_client import PolymarketClient, parse_end_date_ts
 
 
 class TradingEngine:
@@ -100,19 +100,24 @@ class TradingEngine:
                 if eval_info["eligible"]:
                     qualified_candidates.append((m_copy, eval_info))
 
-            # Sort markets: qualified first, then by top outcome probability descending
+            # Sort markets strictly from soonest ending to latest ending (由最快結束到最遲結束排序)
             annotated_markets.sort(
                 key=lambda x: (
-                    1 if x["rule_evaluation"]["status_code"] == "QUALIFIED" else 0,
-                    x["top_outcome"]["prob"],
-                ),
-                reverse=True,
+                    parse_end_date_ts(x.get("end_date", "")),
+                    -x["top_outcome"]["prob"],
+                )
             )
             self.latest_markets = annotated_markets
 
-            # 3. If bot is enabled, automatically place bets on qualified candidates
+            # 3. If bot is enabled, prioritize betting on the soonest-ending events first (最接近結束的賽事優先投注)
             new_bets = []
             if cfg.get("bot_enabled", True) and qualified_candidates:
+                qualified_candidates.sort(
+                    key=lambda pair: (
+                        parse_end_date_ts(pair[0].get("end_date", "")),
+                        -pair[0]["top_outcome"]["prob"],
+                    )
+                )
                 for m_cand, eval_info in qualified_candidates:
                     placed = await self._attempt_auto_bet(m_cand, eval_info, cfg)
                     if placed:
@@ -162,15 +167,20 @@ class TradingEngine:
         spread = float(market.get("spread", 0.0))
         sport = market.get("sport", "OTHER_SPORTS")
 
-        # Check duplicate first so held markets clearly show "已投注"
-        already_bet = self.db.has_bet_on_market(market["market_id"], market.get("condition_id", ""))
+        # Check duplicate first (by market_id, condition_id, market_slug, and normalized event_title)
+        already_bet = self.db.has_bet_on_market(
+            market["market_id"],
+            market.get("condition_id", ""),
+            market.get("market_slug", ""),
+            market.get("event_title", ""),
+        )
         if prevent_dup and already_bet:
             return {
                 "eligible": False,
                 "already_bet": True,
                 "status_code": "ALREADY_BET",
-                "status_label": "✅ 已投注鎖定",
-                "reason": "同場賽事防重複機制已觸發（已持有或已下單過該盤口）",
+                "status_label": "✅ 同項目已投注鎖定",
+                "reason": "同一個運動項目只進行一次投注（已完成該賽事下單）",
                 "target_outcome": top,
             }
 
@@ -322,6 +332,15 @@ class TradingEngine:
         eval_info: Dict[str, Any],
         cfg: Dict[str, Any],
     ) -> Optional[Dict[str, Any]]:
+        # Double-check one-bet-per-event guard right before order execution
+        if self.db.has_bet_on_market(
+            market["market_id"],
+            market.get("condition_id", ""),
+            market.get("market_slug", ""),
+            market.get("event_title", ""),
+        ):
+            return None
+
         trading_mode = cfg.get("trading_mode", "PAPER")
         bet_amount = float(cfg.get("bet_amount_usdc", 25.0))
         daily_budget = float(cfg.get("daily_budget_usdc", 300.0))
@@ -357,6 +376,14 @@ class TradingEngine:
         target_market = next((m for m in self.latest_markets if m["market_id"] == market_id), None)
         if not target_market:
             raise ValueError(f"找不到市場 ID: {market_id}")
+
+        if bool(cfg.get("prevent_duplicate_market", True)) and self.db.has_bet_on_market(
+            target_market["market_id"],
+            target_market.get("condition_id", ""),
+            target_market.get("market_slug", ""),
+            target_market.get("event_title", ""),
+        ):
+            raise ValueError("此運動項目已進行過投注（同一個項目只進行一次投注）")
 
         if outcome_index >= 0 and outcome_index < len(target_market["outcomes"]):
             outcome = target_market["outcomes"][outcome_index]

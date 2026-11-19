@@ -91,6 +91,68 @@ def _parse_json_list(val: Any) -> List[Any]:
     return []
 
 
+_EVENT_SUFFIXES = (
+    " - more markets",
+    " - halftime result",
+    " - exact score",
+    " - first team to score",
+    " - toss match double",
+    " - most sixes",
+    " - team top batter",
+    " - player props",
+    " - alternate lines",
+    " - map 1 winner",
+    " - map 2 winner",
+    " - map 3 winner",
+)
+
+
+def clean_event_title(event_title: str) -> str:
+    title = (event_title or "").strip()
+    lower = title.lower()
+    for suf in _EVENT_SUFFIXES:
+        if lower.endswith(suf):
+            title = title[: len(title) - len(suf)].strip()
+            break
+    return title
+
+
+def normalize_event_key(event_title: str, market_slug: str = "") -> str:
+    cleaned = clean_event_title(event_title).lower()
+    if cleaned:
+        return " ".join(cleaned.split())
+    slug = (market_slug or "").strip().lower()
+    for suf in (
+        "-more-markets",
+        "-halftime-result",
+        "-exact-score",
+        "-first-team-to-score",
+        "-toss-match-double",
+        "-most-sixes",
+        "-team-top-batter",
+    ):
+        if slug.endswith(suf):
+            slug = slug[: len(slug) - len(suf)]
+            break
+    return slug
+
+
+def parse_end_date_ts(end_date_str: str) -> float:
+    if not end_date_str or not str(end_date_str).strip():
+        return float("inf")
+    raw = str(end_date_str).strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    except Exception:
+        return float("inf")
+
+
+
 class SimulatedSportsFeed:
     """Realistic in-play and pre-match Polymarket Sports simulator for sandbox/testing."""
 
@@ -323,11 +385,14 @@ class SimulatedSportsFeed:
                     "liquidity_usdc": m["liquidity_usdc"],
                     "spread": m["spread"],
                     "end_date": m["end_date"],
+                    "end_ts": parse_end_date_ts(m["end_date"]),
+                    "event_key": normalize_event_key(m["event_title"], m["market_slug"]),
                     "outcomes": outcomes_list,
                     "top_outcome": top_outcome,
                     "source": "SIMULATION",
                 }
             )
+        result.sort(key=lambda x: (x["end_ts"], -x["top_outcome"]["prob"]))
         return result
 
     def trigger_breakout_surge(self) -> Dict[str, Any]:
@@ -384,13 +449,39 @@ class PolymarketClient:
             "User-Agent": "PolySports-AutoTrader/1.0",
         }
         markets_by_id: Dict[str, Dict[str, Any]] = {}
+        now_utc = datetime.now(timezone.utc)
+        min_end_iso = (now_utc - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-            # 1. Fetch active sports events from Gamma API
+            # 1. Fetch active sports events from Gamma API (soonest-ending + top volume)
             events_url = f"{GAMMA_API_BASE}/events"
             params_list = [
-                {"tag_slug": "sports", "active": "true", "closed": "false", "limit": "60"},
-                {"active": "true", "closed": "false", "limit": "80", "order": "volume24hr", "ascending": "false"},
+                {
+                    "tag_slug": "sports",
+                    "active": "true",
+                    "closed": "false",
+                    "end_date_min": min_end_iso,
+                    "limit": "80",
+                    "order": "endDate",
+                    "ascending": "true",
+                },
+                {
+                    "tag_slug": "sports",
+                    "active": "true",
+                    "closed": "false",
+                    "end_date_min": min_end_iso,
+                    "limit": "80",
+                    "order": "volume24hr",
+                    "ascending": "false",
+                },
+                {
+                    "active": "true",
+                    "closed": "false",
+                    "end_date_min": min_end_iso,
+                    "limit": "80",
+                    "order": "volume24hr",
+                    "ascending": "false",
+                },
             ]
 
             for params in params_list:
@@ -402,14 +493,25 @@ class PolymarketClient:
                         if not isinstance(events, list):
                             continue
                         for ev in events:
-                            self._extract_markets_from_event(ev, markets_by_id, force_sports=(params.get("tag_slug") == "sports"))
+                            self._extract_markets_from_event(
+                                ev,
+                                markets_by_id,
+                                force_sports=(params.get("tag_slug") == "sports"),
+                            )
                 except Exception:
                     continue
 
             # 2. If still empty, query /markets directly
             if not markets_by_id:
                 markets_url = f"{GAMMA_API_BASE}/markets"
-                m_params = {"active": "true", "closed": "false", "limit": "100", "order": "volume24hr", "ascending": "false"}
+                m_params = {
+                    "active": "true",
+                    "closed": "false",
+                    "end_date_min": min_end_iso,
+                    "limit": "100",
+                    "order": "volume24hr",
+                    "ascending": "false",
+                }
                 async with session.get(markets_url, params=m_params) as resp:
                     if resp.status == 200:
                         raw_markets = await resp.json()
@@ -419,9 +521,33 @@ class PolymarketClient:
                                 if parsed:
                                     markets_by_id[parsed["market_id"]] = parsed
 
-        result = list(markets_by_id.values())
-        result.sort(key=lambda x: x["top_outcome"]["prob"], reverse=True)
+        # 3. Deduplicate by event_key so each sports event/item (同一個項目) only has ONE best representative market
+        events_by_key: Dict[str, Dict[str, Any]] = {}
+        for m in markets_by_id.values():
+            ev_key = m.get("event_key") or normalize_event_key(m["event_title"], m["market_slug"])
+            existing = events_by_key.get(ev_key)
+            if existing is None or self._market_selection_score(m) > self._market_selection_score(existing):
+                events_by_key[ev_key] = m
+
+        # 4. Sort strictly by end time from soonest ending to latest ending (由最快結束到最遲結束)
+        result = list(events_by_key.values())
+        result.sort(key=lambda x: (x.get("end_ts", float("inf")), -x["top_outcome"]["prob"]))
         return result
+
+    @staticmethod
+    def _market_selection_score(m: Dict[str, Any]) -> Tuple[int, int, int, int, float, float]:
+        prob = float(m["top_outcome"]["prob"])
+        liq = float(m.get("liquidity_usdc", 0.0))
+        vol = float(m.get("volume_usdc", 0.0))
+        spread = float(m.get("spread", 1.0))
+        q_lower = str(m.get("question", "")).lower()
+        ev_lower = str(m.get("event_title", "")).lower()
+
+        in_band = 1 if (0.70 <= prob <= 0.95) else 0
+        meets_risk = 1 if (in_band and liq >= 1500.0 and vol >= 5000.0 and spread <= 0.05) else 0
+        not_over_cap = 1 if prob <= 0.95 else 0
+        is_main_match_winner = 1 if (q_lower == ev_lower or ("o/u" not in q_lower and "spread" not in q_lower and "exact score" not in q_lower)) else 0
+        return (meets_risk, in_band, not_over_cap, is_main_match_winner, round(prob, 4), round(liq, 2))
 
     def _extract_markets_from_event(
         self, ev: Dict[str, Any], out: Dict[str, Dict[str, Any]], force_sports: bool = False
@@ -458,11 +584,18 @@ class PolymarketClient:
             return None
 
         question = str(m.get("question") or m.get("title") or "").strip()
-        event_title = str((event_obj or {}).get("title") or question).strip()
+        raw_event_title = str((event_obj or {}).get("title") or question).strip()
+        event_title = clean_event_title(raw_event_title)
         if not question:
             return None
 
         if not force_sports and not is_sports_related(f"{event_title} {question}", tag_strings):
+            return None
+
+        end_date_str = str(m.get("endDate") or (event_obj or {}).get("endDate") or "")
+        end_ts = parse_end_date_ts(end_date_str)
+        # Skip expired events (ended more than 2 hours ago) or events with no valid end date
+        if end_ts == float("inf") or end_ts < (time.time() - 2 * 3600):
             return None
 
         outcomes_raw = _parse_json_list(m.get("outcomes"))
@@ -529,13 +662,15 @@ class PolymarketClient:
             "sport_label": meta["label"],
             "sport_icon": meta["icon"],
             "event_title": event_title,
+            "event_key": normalize_event_key(event_title, market_slug),
             "question": question,
             "market_slug": market_slug,
             "polymarket_url": f"https://polymarket.com/event/{market_slug}" if market_slug else "https://polymarket.com/sports",
             "volume_usdc": round(vol, 2),
             "liquidity_usdc": round(liq, 2),
             "spread": round(spread_val, 4),
-            "end_date": str(m.get("endDate") or (event_obj or {}).get("endDate") or ""),
+            "end_date": end_date_str,
+            "end_ts": end_ts,
             "outcomes": outcomes_list,
             "top_outcome": top_outcome,
             "source": "LIVE_GAMMA_API",
