@@ -17,12 +17,13 @@ DEFAULT_HK_TEMP_CONFIG = {
     "auto_enabled": True,
     "mode": "PAPER",  # "PAPER" or "LIVE"
     "gate_hour_hkt": 11,
-    "price_min": 0.75,  # 75% or above, no upper cap
+    "price_min": 0.70,  # 70% or above, no upper cap
     "stake_usdc": 10.0,
     "stake_min_usdc": 1.0,
     "stake_max_usdc": 1000.0,
     "one_bet_per_day": True,
     "aws_finalize_hour_hkt": 19,
+    "migrated_70_v1": True,
 }
 
 INITIAL_WEATHER_HISTORY = [
@@ -120,6 +121,18 @@ class HkTempEngine:
                     "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
                     ("hk_temp_config", json.dumps(DEFAULT_HK_TEMP_CONFIG), now_iso),
                 )
+            else:
+                try:
+                    saved_cfg = json.loads(row["value"])
+                    if not saved_cfg.get("migrated_70_v1"):
+                        saved_cfg["price_min"] = 0.70
+                        saved_cfg["migrated_70_v1"] = True
+                        conn.execute(
+                            "UPDATE settings SET value = ?, updated_at = ? WHERE key = 'hk_temp_config'",
+                            (json.dumps(saved_cfg), now_iso),
+                        )
+                except Exception:
+                    pass
 
             # Seed initial historical weather records
             for rec in INITIAL_WEATHER_HISTORY:
@@ -225,7 +238,7 @@ class HkTempEngine:
         market_date = dt_hkt.strftime("%Y-%m-%d")
         gate_hour = int(cfg.get("gate_hour_hkt", 11))
         gate_open = dt_hkt.hour >= gate_hour
-        price_min = float(cfg.get("price_min", 0.75))
+        price_min = float(cfg.get("price_min", 0.70))
 
         # 1. Fetch HKO weather + Polymarket daily HK temperature market
         weather_info = await self._fetch_hko_weather(dt_hkt, market_date)
@@ -235,7 +248,7 @@ class HkTempEngine:
         if market_info and market_info.get("outcomes"):
             self._update_trades_mark(market_date, market_info["outcomes"])
 
-        # 3. Evaluate Auto-Betting Rule (After 11:00 HKT, any 'Yes' outcome >= 75%, 1 bet per marketDate)
+        # 3. Evaluate Auto-Betting Rule (After 11:00 HKT, any 'Yes' outcome >= 70%, 1 bet per marketDate)
         already_traded_today = self.has_traded_market_date(market_date)
         qualified_outcomes = [
             o for o in (market_info.get("outcomes") if market_info else []) if o.get("inBand")
@@ -274,7 +287,7 @@ class HkTempEngine:
                     outcome=target,
                     stake_usdc=float(cfg.get("stake_usdc", 10.0)),
                     mode=str(cfg.get("mode", "PAPER")),
-                    trigger_type="AUTO_75_HKT",
+                    trigger_type="AUTO_70_HKT",
                 )
                 if placed:
                     phase = "ordered"

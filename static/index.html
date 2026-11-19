@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark" />
-  <title>PolyQuant All-in-One | Polymarket 運動 70%+ 與香港氣溫 75%+ 自動交易系統</title>
+  <title>PolyQuant 70%+ 全整合系統 | Polymarket 運動賽事 &amp; 香港每日最高氣溫自動交易終端</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
@@ -14,21 +14,24 @@
       <div class="brand-logo" aria-hidden="true">⚡</div>
       <div>
         <div class="brand-title-row">
-          <h1 class="brand-title">PolyQuant Hub</h1>
-          <span class="badge badge-accent">運動 70%+ &amp; 香港氣溫 75%+ 整合系統</span>
+          <h1 class="brand-title">PolyQuant 70%+ Hub</h1>
+          <span class="badge badge-accent">運動 70%+ &amp; 香港氣溫 70%+ 雙引擎合一</span>
         </div>
-        <p class="brand-subtitle">Polymarket 24/7 全自動監測與即時投注終端 · 香港時間 <span id="header-hkt-clock">--:--:--</span></p>
+        <p class="brand-subtitle">Polymarket 24/7 全自動監測與毫秒級投注終端 · 香港時間 <span id="header-hkt-clock">--:--:--</span></p>
       </div>
     </div>
 
-    <!-- Primary Module Switcher: Sports vs HK Temperature -->
-    <div class="module-switcher" role="tablist" aria-label="切換交易模組">
-      <button type="button" id="module-sports-btn" class="module-tab active" role="tab" aria-selected="true">
-        🏟️ 運動賽事交易 (70%+)
+    <!-- Layout Display Filter: Unified View (Default) vs Focus Views -->
+    <div class="module-switcher" role="tablist" aria-label="版面檢視模式">
+      <button type="button" id="view-all-btn" class="module-tab active" role="tab" aria-selected="true">
+        🔀 雙引擎整合總覽 (同屏)
       </button>
-      <button type="button" id="module-hktemp-btn" class="module-tab" role="tab" aria-selected="false">
-        🌡️ 香港氣溫交易 (75%+)
-        <span class="badge badge-success" id="hktemp-nav-badge">天文臺連線</span>
+      <button type="button" id="view-hkonly-btn" class="module-tab" role="tab" aria-selected="false">
+        🌡️ 專注香港氣溫 (70%+)
+        <span class="badge badge-success" id="hktemp-nav-badge">HKO 即時</span>
+      </button>
+      <button type="button" id="view-sportsonly-btn" class="module-tab" role="tab" aria-selected="false">
+        🏟️ 專注運動賽事 (70%+)
       </button>
     </div>
 
@@ -49,7 +52,7 @@
         </select>
       </div>
 
-      <!-- Trading Mode Segmented Switch -->
+      <!-- Unified Trading Mode Segmented Switch (Controls both Sports & HK Temp) -->
       <div class="segmented-control" role="group" aria-label="交易執行模式">
         <button type="button" id="mode-paper-btn" class="seg-btn active">
           🧪 模擬盤 (Paper)
@@ -60,7 +63,7 @@
       </div>
 
       <!-- Quick Action Buttons -->
-      <button type="button" id="manual-scan-btn" class="btn btn-ghost" title="立即重新掃描盤口">
+      <button type="button" id="manual-scan-btn" class="btn btn-ghost" title="立即重新掃描運動與香港氣溫盤口">
         🔄 掃描
       </button>
       <button type="button" id="open-clob-modal-btn" class="btn btn-outline">
@@ -76,41 +79,25 @@
   <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
   <!-- =================================================================== -->
-  <!-- MODULE 1: SPORTS 70%+ AUTO-TRADING VIEW                             -->
+  <!-- UNIFIED ALL-IN-ONE DASHBOARD (SPORTS 70%+ & HK TEMP 70%+)           -->
   <!-- =================================================================== -->
-  <main id="view-sports" class="dashboard-container">
-    <div class="section-banner">
-      <div>
-        <h2 class="section-banner-title">🏟️ Polymarket 運動項目 70%+ 自動交易系統</h2>
-        <p class="section-banner-desc">監測所有運動賽事（NBA、足球、NFL、MLB、NHL、網球、UFC、電競），勝率達 70% 或以上立即自動投注</p>
-      </div>
-      <div class="section-banner-actions">
-        <button type="button" id="bot-toggle-btn" class="btn btn-bot-active">
-          <span id="bot-toggle-icon">🤖</span>
-          <span id="bot-toggle-label">運動自動投注：運行中</span>
-        </button>
-        <button type="button" id="sim-breakout-btn" class="btn btn-secondary" title="在模擬盤口中讓一場運動賽事瞬間突破 70% 勝率，測試機器人毫秒級自動下單">
-          📈 測試 70%+ 突破觸發
-        </button>
-      </div>
-    </div>
-
-    <!-- KPI Summary Strip -->
-    <section class="kpi-grid" aria-label="帳戶與策略即時指標">
+  <main class="dashboard-container">
+    <!-- 1. Unified 6-Card KPI Summary Strip -->
+    <section class="kpi-grid kpi-grid-6" aria-label="全系統資金、運動雷達與香港天文臺即時指標">
       <article class="kpi-card">
         <div class="kpi-header">
-          <span class="kpi-label">模擬帳戶總淨值 (Total Equity)</span>
+          <span class="kpi-label">💰 帳戶總淨值 (共用資金池)</span>
           <button type="button" id="reset-paper-btn" class="btn-link" title="重置模擬帳戶資金與持倉">重置帳戶</button>
         </div>
         <div class="kpi-value" id="kpi-equity">$1,000.00</div>
         <div class="kpi-sub">
-          可用現金 <strong id="kpi-cash">$1,000.00</strong> · 持倉市值 <strong id="kpi-open-value">$0.00</strong>
+          可用現金 <strong id="kpi-cash">$1,000.00</strong> · 總持倉市值 <strong id="kpi-open-value">$0.00</strong>
         </div>
       </article>
 
       <article class="kpi-card">
         <div class="kpi-header">
-          <span class="kpi-label">累計總損益 (Total PnL / ROI)</span>
+          <span class="kpi-label">📈 雙引擎累計總損益 (PnL)</span>
           <span class="badge" id="kpi-roi-badge">0.00%</span>
         </div>
         <div class="kpi-value" id="kpi-total-pnl">$0.00</div>
@@ -121,218 +108,358 @@
 
       <article class="kpi-card">
         <div class="kpi-header">
-          <span class="kpi-label">活躍持倉 &amp; 歷史勝率</span>
+          <span class="kpi-label">📌 綜合持倉 &amp; 歷史勝率</span>
           <span class="kpi-tag" id="kpi-winrate-tag">勝率 --%</span>
         </div>
-        <div class="kpi-value" id="kpi-positions-count">0 / 15 倉位</div>
+        <div class="kpi-value" id="kpi-positions-count">0 筆進行中</div>
         <div class="kpi-sub">
-          已結算 <strong id="kpi-closed-stats">0 勝 0 敗</strong> · 投入中 <strong id="kpi-invested">$0.00</strong>
+          運動 <strong id="kpi-sports-open-count">0</strong> 筆 · 氣溫 <strong id="hk-open-count">0</strong> 筆 · 總投入 <strong id="kpi-invested">$0.00</strong>
         </div>
       </article>
 
       <article class="kpi-card">
         <div class="kpi-header">
-          <span class="kpi-label">今日自動投注預算使用率</span>
-          <span class="kpi-tag" id="kpi-budget-pct">0%</span>
+          <span class="kpi-label">🏟️ 運動賽事雷達 (&gt;= 70%)</span>
+          <span class="badge badge-success" id="kpi-source-badge">LIVE</span>
         </div>
-        <div class="kpi-value" id="kpi-daily-spend">$0.00 / $300</div>
-        <div class="progress-track">
+        <div class="kpi-value" id="kpi-markets-summary">0 / 0 場達標</div>
+        <div class="kpi-sub" id="kpi-active-rule-summary">
+          今日運動已投 <span id="kpi-daily-spend">$0 / $300</span>
+        </div>
+        <div class="progress-track" style="margin-top:4px;">
           <div class="progress-fill" id="kpi-budget-bar" style="width: 0%"></div>
         </div>
       </article>
 
       <article class="kpi-card kpi-card-highlight">
         <div class="kpi-header">
-          <span class="kpi-label">運動盤口雷達 (&gt;= 70% 勝率)</span>
-          <span class="badge badge-success" id="kpi-source-badge">SCANNING</span>
+          <span class="kpi-label">🌡️ 香港天文臺現時 &amp; 預測最高</span>
+          <span class="badge badge-success" id="hk-current-stale-badge">即時觀測</span>
         </div>
-        <div class="kpi-value" id="kpi-markets-summary">0 / 0 場達標</div>
-        <div class="kpi-sub" id="kpi-active-rule-summary">
-          條件：勝率 70%~95% 立即買入 $25 USDC
+        <div class="kpi-value">
+          <span id="hk-current-temp">--°C</span>
+          <span class="kpi-inline-divider">/</span>
+          <span id="hk-forecast-temp" class="kpi-secondary-val">預測 --°C</span>
+        </div>
+        <div class="kpi-sub">
+          最高溫時間 <strong id="hk-max-time">--:--</strong> · 官方日高 <strong id="hk-official-max">觀測中</strong>
+        </div>
+      </article>
+
+      <article class="kpi-card kpi-card-highlight">
+        <div class="kpi-header">
+          <span class="kpi-label">⚡ 香港氣溫 70%+ 自動閘門</span>
+          <span class="badge badge-accent" id="hk-poly-status-badge">Polymarket 即時</span>
+        </div>
+        <div class="kpi-value" id="hk-phase-label" style="font-size:17px;">即時監測中</div>
+        <div class="kpi-sub" id="hk-gate-countdown">
+          11:00 HKT 開閘 · 達 70%+ 立即自動買入
         </div>
       </article>
     </section>
 
-    <!-- Strategy & Risk Control Configuration Card -->
+    <!-- 2. Unified Strategy & Risk Control Panel (Both Sports 70%+ and HK Temp 70%+) -->
     <section class="panel strategy-panel">
       <div class="panel-header">
         <div class="panel-title-group">
-          <h2 class="panel-title">🎯 運動 70%+ 自動投注策略與風控規則設定</h2>
-          <span class="panel-hint">當運動賽事任一選項勝率落入目標區間且通過流動性檢驗時，系統將於毫秒內自動建立倉位</span>
+          <h2 class="panel-title">🎯 雙引擎 70%+ 自動投注策略與風控規則設定 (運動賽事 + 香港每日最高氣溫)</h2>
+          <span class="panel-hint">兩大系統共用資金池與 CLOB 憑證：運動選項 &gt;= 70% 或香港氣溫區間於 11:00 後 &gt;= 70% 即自動下單</span>
         </div>
         <div class="panel-actions">
+          <button type="button" id="bot-toggle-btn" class="btn btn-bot-active">
+            <span id="bot-toggle-icon">🏟️</span>
+            <span id="bot-toggle-label">運動 70%+ 自動：運行中</span>
+          </button>
+          <button type="button" id="hk-auto-toggle-btn" class="btn btn-bot-active">
+            <span>🌡️ 氣溫 70%+ 自動：運行中</span>
+          </button>
+          <button type="button" id="sim-breakout-btn" class="btn btn-secondary" title="在運動模擬盤口中讓一場賽事瞬間突破 70% 勝率，測試機器人毫秒級自動下單">
+            📈 測試 70%+ 觸發
+          </button>
           <button type="button" id="save-config-btn" class="btn btn-primary">
-            💾 儲存並立即套用規則
+            💾 一鍵儲存雙引擎設定
           </button>
         </div>
       </div>
 
-      <form id="strategy-form" class="strategy-grid">
+      <form id="strategy-form" class="strategy-grid strategy-grid-unified">
+        <!-- Sports 70%+ Controls -->
         <div class="field-group">
-          <label for="cfg-min-prob">最低觸發勝率 (%)</label>
+          <label for="cfg-min-prob">🏟️ [運動] 最低觸發勝率</label>
           <div class="input-with-unit">
             <input type="number" id="cfg-min-prob" min="10" max="98" step="0.5" value="70" required />
             <span class="unit">%</span>
           </div>
-          <small>預設 70%：勝率 &gt;= 此數值立即觸發</small>
+          <small>預設 70%：運動勝率 &gt;= 此值觸發</small>
         </div>
 
         <div class="field-group">
-          <label for="cfg-max-prob">最高勝率上限 (%)</label>
+          <label for="cfg-max-prob">🏟️ [運動] 最高勝率上限</label>
           <div class="input-with-unit">
             <input type="number" id="cfg-max-prob" min="50" max="99.5" step="0.5" value="95" required />
             <span class="unit">%</span>
           </div>
-          <small>避開 98%~99% 利潤極微薄的尾盤</small>
+          <small>避開 98%+ 利潤極微薄尾盤</small>
         </div>
 
         <div class="field-group">
-          <label for="cfg-bet-amount">單筆固定投注額 (USDC)</label>
+          <label for="cfg-bet-amount">🏟️ [運動] 單筆投注額</label>
           <div class="input-with-unit">
             <input type="number" id="cfg-bet-amount" min="1" max="10000" step="1" value="25" required />
             <span class="unit">USDC</span>
           </div>
-          <small>每次觸發 70%+ 條件時買入的金額</small>
+          <small>運動達標時單筆買入金額</small>
         </div>
 
         <div class="field-group">
-          <label for="cfg-daily-budget">每日投注總預算上限</label>
+          <label for="cfg-daily-budget">🏟️ [運動] 每日預算上限</label>
           <div class="input-with-unit">
             <input type="number" id="cfg-daily-budget" min="10" max="100000" step="10" value="300" required />
             <span class="unit">USDC</span>
           </div>
-          <small>單日累計下單達此金額後自動暫停新單</small>
+          <small>運動單日累計上限保護</small>
         </div>
 
         <div class="field-group">
-          <label for="cfg-min-liquidity">最低盤口流動性門檻</label>
+          <label for="cfg-min-liquidity">🏟️ [運動] 最低流動性</label>
           <div class="input-with-unit">
             <input type="number" id="cfg-min-liquidity" min="0" max="1000000" step="100" value="1500" required />
             <span class="unit">USDC</span>
           </div>
-          <small>過濾深度不足、容易滑價的冷門賽事</small>
+          <small>過濾深度不足冷門盤</small>
         </div>
 
         <div class="field-group">
-          <label for="cfg-max-spread">最大允許買賣點差 (%)</label>
+          <label for="cfg-max-spread">🏟️ [運動] 最大允許點差</label>
           <div class="input-with-unit">
             <input type="number" id="cfg-max-spread" min="0.5" max="25" step="0.5" value="5.0" required />
             <span class="unit">%</span>
           </div>
-          <small>Best Ask - Best Bid 點差上限保護</small>
+          <small>買賣價差上限保護</small>
         </div>
 
         <div class="field-group">
-          <label for="cfg-tp-prob">自動停利出場勝率 (%)</label>
+          <label for="cfg-tp-prob">🏟️ [運動] 自動停利勝率</label>
           <div class="input-with-unit">
             <input type="checkbox" id="cfg-tp-enabled" checked title="啟用自動停利" />
             <input type="number" id="cfg-tp-prob" min="75" max="99.5" step="0.5" value="96" />
             <span class="unit">%</span>
           </div>
-          <small>勝率升至 96% 時自動平倉鎖定獲利</small>
+          <small>升至 96% 自動獲利了結</small>
         </div>
 
         <div class="field-group">
-          <label for="cfg-sl-prob">自動停損出場勝率 (%)</label>
+          <label for="cfg-sl-prob">🏟️ [運動] 自動停損勝率</label>
           <div class="input-with-unit">
             <input type="checkbox" id="cfg-sl-enabled" checked title="啟用自動停損" />
             <input type="number" id="cfg-sl-prob" min="5" max="69" step="1" value="52" />
             <span class="unit">%</span>
           </div>
-          <small>若球隊被逆轉跌破 52% 時自動停損</small>
+          <small>跌破 52% 自動停損平倉</small>
+        </div>
+
+        <!-- HK Temperature 70%+ Controls (Highlighted) -->
+        <div class="field-group field-group-hk">
+          <label for="hk-pricemin-input">🌡️ [香港氣溫] 觸發勝率門檻</label>
+          <div class="input-with-unit">
+            <input type="number" id="hk-pricemin-input" min="10" max="99" step="1" value="70" required />
+            <span class="unit">%</span>
+          </div>
+          <small>預設 70%（達 70% 立即買入，無上限）</small>
+        </div>
+
+        <div class="field-group field-group-hk">
+          <label for="hk-stake-input">🌡️ [香港氣溫] 單筆投注額</label>
+          <div class="input-with-unit">
+            <input type="number" id="hk-stake-input" min="1" max="1000" step="1" value="10" required />
+            <span class="unit">USDC</span>
+          </div>
+          <small>每日第一個達標溫度選項注額</small>
+        </div>
+
+        <div class="field-group field-group-hk">
+          <label for="hk-gatehour-input">🌡️ [香港氣溫] 開閘時間 (HKT)</label>
+          <div class="input-with-unit">
+            <input type="number" id="hk-gatehour-input" min="0" max="23" step="1" value="11" required />
+            <span class="unit">:00</span>
+          </div>
+          <small>香港時間 11:00 後開始自動監測</small>
         </div>
 
         <div class="field-group">
-          <label for="cfg-scan-interval">背景掃描頻率 (秒)</label>
-          <div class="input-with-unit">
-            <input type="number" id="cfg-scan-interval" min="2" max="120" step="1" value="5" required />
-            <span class="unit">秒</span>
+          <label for="cfg-scan-interval">⏱️ [全域] 掃描間隔 &amp; 倉位上限</label>
+          <div class="input-dual-inline">
+            <div class="input-with-unit">
+              <input type="number" id="cfg-scan-interval" min="2" max="120" step="1" value="5" required title="背景掃描間隔(秒)" />
+              <span class="unit">秒</span>
+            </div>
+            <div class="input-with-unit">
+              <input type="number" id="cfg-max-positions" min="1" max="100" step="1" value="15" required title="最大同時持倉數" />
+              <span class="unit">倉</span>
+            </div>
           </div>
-          <small>24/7 常駐背景輪詢間隔 (建議 3~5 秒)</small>
-        </div>
-
-        <div class="field-group">
-          <label for="cfg-max-positions">最大同時持倉數</label>
-          <div class="input-with-unit">
-            <input type="number" id="cfg-max-positions" min="1" max="100" step="1" value="15" required />
-            <span class="unit">場</span>
-          </div>
-          <small>加上同場比賽防重複下注保護</small>
+          <small>24/7 常駐輪詢頻率與最大持倉</small>
         </div>
       </form>
     </section>
 
-    <!-- Main Two-Column Workspace -->
+    <!-- 3. Unified Main Two-Column Workspace -->
     <div class="workspace-grid">
-      <section class="panel markets-panel">
-        <div class="panel-header">
-          <div class="panel-title-group">
-            <h2 class="panel-title">🏟️ Polymarket 運動項目即時勝率監測表</h2>
-            <span class="panel-hint" id="last-scan-timestamp">最後掃描：剛才</span>
+      <!-- Left Column: Both HK Temperature 70%+ Monitor AND Sports 70%+ Radar in one seamless flow -->
+      <div class="main-monitors-stack">
+        <!-- =============================================================== -->
+        <!-- MONITOR A: HONG KONG DAILY HIGHEST TEMPERATURE (70%+ AUTO-BET)  -->
+        <!-- =============================================================== -->
+        <section id="section-hktemp-monitor" class="panel hktemp-integrated-panel">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <div class="brand-title-row">
+                <span class="hk-badge-icon">溫</span>
+                <h2 class="panel-title" id="hk-market-title">🌡️ 香港天文臺每日最高氣溫盤口 (70%+ 自動狙擊)</h2>
+                <span class="badge badge-success" id="hk-market-status-badge">開放</span>
+                <span class="badge badge-outline" id="hk-obs-status-badge">天文臺：即時</span>
+              </div>
+              <span class="panel-hint" id="hk-phase-message">
+                香港時間 11:00 之後，監測當日所有「是」選項；價格達到 70% 或以上時立即以設定金額自動投注（無價格上限）。
+              </span>
+            </div>
+
+            <div class="subnav-pills" role="tablist">
+              <button type="button" class="subnav-btn active" data-hktab="overview">
+                📊 今日溫度區間 (70%+ 監測)
+              </button>
+              <button type="button" class="subnav-btn" data-hktab="records">
+                🌦️ 天氣預報誤差對照表
+              </button>
+            </div>
           </div>
 
-          <div class="filter-controls">
-            <label class="checkbox-pill">
-              <input type="checkbox" id="filter-only-70" />
-              <span>🔥 僅看 &gt;= 70% 選項</span>
-            </label>
-            <input type="search" id="market-search-input" class="input-search" placeholder="搜尋球隊、聯賽或賽事名稱..." />
+          <!-- Weather Info Strip inside HK Temp Panel -->
+          <div class="hk-weather-strip">
+            <div class="hk-weather-pill">
+              <span class="hk-wp-label">📍 天文臺總部現時氣溫</span>
+              <strong id="hk-strip-current">--°C</strong>
+              <small id="hk-current-detail">香港天文臺</small>
+            </div>
+            <div class="hk-weather-pill">
+              <span class="hk-wp-label">☀️ 今日預測最高 / 最低 (<span id="hk-forecast-date">--</span>)</span>
+              <strong id="hk-strip-forecast">--°C</strong>
+              <small id="hk-forecast-desc">載入香港天文臺預報中...</small>
+            </div>
+            <div class="hk-weather-pill">
+              <span class="hk-wp-label">🕒 今日最高溫出現時間 &amp; 官方日值</span>
+              <strong id="hk-strip-maxtime">--:--</strong>
+              <small id="hk-max-time-note">10分鐘公布檔 · 紅線標示 <span id="hk-rule-prob-text">70%</span> 自動買入門檻</small>
+            </div>
           </div>
-        </div>
 
-        <div class="sport-tabs" id="sport-tabs" role="tablist">
-          <button type="button" class="sport-tab active" data-sport="ALL">全部運動</button>
-          <button type="button" class="sport-tab" data-sport="NBA">🏀 NBA 籃球</button>
-          <button type="button" class="sport-tab" data-sport="SOCCER">⚽ 足球</button>
-          <button type="button" class="sport-tab" data-sport="NFL">🏈 NFL 美足</button>
-          <button type="button" class="sport-tab" data-sport="MLB">⚾ MLB 棒球</button>
-          <button type="button" class="sport-tab" data-sport="NHL">🏒 NHL 冰球</button>
-          <button type="button" class="sport-tab" data-sport="TENNIS">🎾 網球</button>
-          <button type="button" class="sport-tab" data-sport="UFC">🥊 UFC 格鬥</button>
-          <button type="button" class="sport-tab" data-sport="ESPORTS">🎮 電競</button>
-        </div>
+          <!-- Sub-tab 1: Today's 11 Temperature Buckets Grid -->
+          <div id="hktab-overview">
+            <div id="hk-outcomes-container" class="hk-outcomes-grid">
+              <div class="empty-cell">正在載入今日香港最高氣溫 11 個溫度區間即時報價...</div>
+            </div>
+          </div>
 
-        <div class="table-scroll">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>運動 / 賽事與盤口問題</th>
-                <th>各選項即時勝率 (Implied Probability)</th>
-                <th>盤口深度 &amp; 點差</th>
-                <th>系統風控判定狀態</th>
-                <th class="text-right">手動操作</th>
-              </tr>
-            </thead>
-            <tbody id="markets-tbody">
-              <tr>
-                <td colspan="5" class="empty-cell">正在載入 Polymarket 運動賽事數據...</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
+          <!-- Sub-tab 2: Historical Weather Forecast vs Actual Comparison Table -->
+          <div id="hktab-records" class="hidden">
+            <div class="table-scroll">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>市場日期</th>
+                    <th>天文臺預測最高</th>
+                    <th>預報基準時間</th>
+                    <th>官方實測日最高 (CLMMAXT)</th>
+                    <th>最高溫出現時間 (10分鐘檔)</th>
+                    <th>預測誤差 (實際 - 預測)</th>
+                  </tr>
+                </thead>
+                <tbody id="hk-weather-records-tbody">
+                  <tr><td colspan="6" class="empty-cell">正在載入香港天文臺歷史天氣對照資料...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
 
+        <!-- =============================================================== -->
+        <!-- MONITOR B: GLOBAL SPORTS MARKETS (70%+ AUTO-BET)                -->
+        <!-- =============================================================== -->
+        <section id="section-sports-monitor" class="panel markets-panel">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h2 class="panel-title">🏟️ Polymarket 全球運動賽事 70%+ 即時勝率監測表</h2>
+              <span class="panel-hint" id="last-scan-timestamp">最後掃描：剛才</span>
+            </div>
+
+            <div class="filter-controls">
+              <label class="checkbox-pill">
+                <input type="checkbox" id="filter-only-70" />
+                <span>🔥 僅看 &gt;= 70% 選項</span>
+              </label>
+              <input type="search" id="market-search-input" class="input-search" placeholder="搜尋球隊、聯賽或賽事名稱..." />
+            </div>
+          </div>
+
+          <div class="sport-tabs" id="sport-tabs" role="tablist">
+            <button type="button" class="sport-tab active" data-sport="ALL">全部運動</button>
+            <button type="button" class="sport-tab" data-sport="NBA">🏀 NBA 籃球</button>
+            <button type="button" class="sport-tab" data-sport="SOCCER">⚽ 足球</button>
+            <button type="button" class="sport-tab" data-sport="NFL">🏈 NFL 美足</button>
+            <button type="button" class="sport-tab" data-sport="MLB">⚾ MLB 棒球</button>
+            <button type="button" class="sport-tab" data-sport="NHL">🏒 NHL 冰球</button>
+            <button type="button" class="sport-tab" data-sport="TENNIS">🎾 網球</button>
+            <button type="button" class="sport-tab" data-sport="UFC">🥊 UFC 格鬥</button>
+            <button type="button" class="sport-tab" data-sport="ESPORTS">🎮 電競</button>
+          </div>
+
+          <div class="table-scroll">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>運動 / 賽事與盤口問題</th>
+                  <th>各選項即時勝率 (Implied Probability)</th>
+                  <th>盤口深度 &amp; 點差</th>
+                  <th>系統風控判定狀態</th>
+                  <th class="text-right">手動操作</th>
+                </tr>
+              </thead>
+              <tbody id="markets-tbody">
+                <tr>
+                  <td colspan="5" class="empty-cell">正在載入 Polymarket 運動賽事數據...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <!-- Right Side Column: Unified Positions (Sports + HK Temp) & Unified Execution Terminal -->
       <aside class="side-column">
         <section class="panel positions-panel">
           <div class="panel-header">
             <div class="tab-buttons" role="tablist">
               <button type="button" class="tab-btn active" id="tab-open-pos-btn">
-                📌 目前持倉 (<span id="open-pos-badge">0</span>)
+                🏟️ 運動持倉 (<span id="open-pos-badge">0</span>)
+              </button>
+              <button type="button" class="tab-btn" id="tab-hk-pos-btn">
+                🌡️ 氣溫注項 (<span id="hk-pos-badge">0</span>)
               </button>
               <button type="button" class="tab-btn" id="tab-closed-pos-btn">
-                📜 已結算紀錄 (<span id="closed-pos-badge">0</span>)
+                📜 已結算 (<span id="closed-pos-badge">0</span>)
               </button>
             </div>
           </div>
 
           <div id="open-positions-view" class="positions-list"></div>
+          <div id="hk-positions-view" class="positions-list hidden"></div>
           <div id="closed-positions-view" class="positions-list hidden"></div>
         </section>
 
         <section class="panel logs-panel">
           <div class="panel-header">
             <div class="panel-title-group">
-              <h2 class="panel-title">⚡ 24/7 自動交易執行日誌 (運動 + 氣溫)</h2>
+              <h2 class="panel-title">⚡ 24/7 雙引擎自動交易日誌 (運動 + 氣溫)</h2>
             </div>
             <span class="badge badge-outline" id="log-count-badge">即時更新</span>
           </div>
@@ -342,244 +469,13 @@
     </div>
   </main>
 
-  <!-- =================================================================== -->
-  <!-- MODULE 2: HONG KONG TEMPERATURE 75%+ AUTO-TRADING VIEW              -->
-  <!-- (Integrated from https://hk-temp-trading.vercel.app/)               -->
-  <!-- =================================================================== -->
-  <main id="view-hktemp" class="dashboard-container hidden">
-    <!-- Header Banner with Sub-navigation (總覽 / 投注與規則 / 數據記錄與天氣對照) -->
-    <div class="section-banner hktemp-banner">
-      <div>
-        <div class="brand-title-row">
-          <span class="hk-badge-icon">溫</span>
-          <h2 class="section-banner-title">香港氣溫交易 · 每日最高氣溫自動交易</h2>
-          <span class="badge badge-success" id="hk-obs-status-badge">天文臺：即時</span>
-          <span class="badge badge-accent" id="hk-poly-status-badge">Polymarket：即時</span>
-        </div>
-        <p class="section-banner-desc" id="hk-subtitle-date">
-          香港時間 11:00 之後，監測當日所有「是」選項；價格達到 75% 或以上時立即以設定金額自動投注，沒有價格上限。同一市場日只自動投注第一個達標選項。
-        </p>
-      </div>
-
-      <div class="subnav-pills" role="tablist">
-        <button type="button" class="subnav-btn active" data-hktab="overview">📊 今日總覽 &amp; 投注</button>
-        <button type="button" class="subnav-btn" data-hktab="records">📜 數據記錄 &amp; 天氣對照</button>
-      </div>
-    </div>
-
-    <!-- Auto-Trading Phase Banner -->
-    <section id="hk-phase-banner" class="hk-phase-box phase-monitoring">
-      <div class="hk-phase-title-row">
-        <span class="badge badge-outline">自動交易狀態</span>
-        <strong id="hk-phase-label">即時監測中</strong>
-        <span id="hk-gate-countdown" class="hk-countdown-text"></span>
-      </div>
-      <p id="hk-phase-message" class="hk-phase-msg">
-        香港時間 11:00 之後，監測當日所有「是」選項；價格達到 75% 或以上時，立即以設定金額投注，沒有價格上限。
-      </p>
-    </section>
-
-    <!-- Sub-view A: HK Temperature Overview & Trading -->
-    <div id="hktab-overview" class="hk-section-stack">
-      <!-- 4 Weather + 4 Account Cards -->
-      <section class="kpi-grid">
-        <article class="kpi-card kpi-card-highlight">
-          <div class="kpi-header">
-            <span class="kpi-label">🌡️ 香港目前氣溫 (香港天文臺)</span>
-            <span class="badge badge-success" id="hk-current-stale-badge">即時觀測</span>
-          </div>
-          <div class="kpi-value" id="hk-current-temp">--°C</div>
-          <div class="kpi-sub" id="hk-current-detail">測站：香港天文臺</div>
-        </article>
-
-        <article class="kpi-card">
-          <div class="kpi-header">
-            <span class="kpi-label">☀️ 今日天文臺預測最高 / 最低</span>
-            <span class="kpi-tag" id="hk-forecast-date">--</span>
-          </div>
-          <div class="kpi-value" id="hk-forecast-temp">--°C</div>
-          <div class="kpi-sub" id="hk-forecast-desc">載入天文臺預報中...</div>
-        </article>
-
-        <article class="kpi-card">
-          <div class="kpi-header">
-            <span class="kpi-label">📋 官方日最高 (CLMMAXT)</span>
-            <span class="kpi-tag">天文臺公報</span>
-          </div>
-          <div class="kpi-value" id="hk-official-max">觀測中</div>
-          <div class="kpi-sub">本日仍在觀測，或官方日值尚未公布</div>
-        </article>
-
-        <article class="kpi-card">
-          <div class="kpi-header">
-            <span class="kpi-label">🕒 最高溫出現時間</span>
-            <span class="kpi-tag">10分鐘公布檔</span>
-          </div>
-          <div class="kpi-value" id="hk-max-time">--:--</div>
-          <div class="kpi-sub" id="hk-max-time-note">午夜至今最高氣溫首次出現時間</div>
-        </article>
-
-        <article class="kpi-card">
-          <div class="kpi-header">
-            <span class="kpi-label">💰 氣溫交易可用餘額 &amp; 曝險</span>
-            <span class="kpi-tag" id="hk-mode-tag">模擬盤</span>
-          </div>
-          <div class="kpi-value" id="hk-balance-val">$1,000.00</div>
-          <div class="kpi-sub">
-            進行中注項 <strong id="hk-open-count">0</strong> 筆 · 總曝險 <strong id="hk-exposure-val">$0.00 USDC</strong>
-          </div>
-        </article>
-      </section>
-
-      <!-- Two-Column HK Temp Trading Control + Today's Temperature Outcomes -->
-      <div class="hk-trade-grid">
-        <!-- Left: Auto-Trade Control Card -->
-        <section class="panel">
-          <div class="panel-header">
-            <div class="panel-title-group">
-              <h2 class="panel-title">⚙️ 香港氣溫自動交易設定</h2>
-              <span class="panel-hint">只交易當日「香港最高氣溫」市場</span>
-            </div>
-          </div>
-          <div class="modal-body">
-            <button type="button" id="hk-auto-toggle-btn" class="btn btn-bot-active" style="width:100%;padding:11px;">
-              停止自動交易 (目前：開啟中)
-            </button>
-
-            <div class="field-group">
-              <label for="hk-mode-select">交易盤別模式</label>
-              <select id="hk-mode-select">
-                <option value="PAPER">模擬盤 (Paper - 預設記錄模擬投注，不送出真實訂單)</option>
-                <option value="LIVE">實盤 (Live CLOB - 達標後以真實資金下單)</option>
-              </select>
-            </div>
-
-            <div class="field-group">
-              <label for="hk-stake-input">單筆投注金額 (USDC)</label>
-              <div class="input-with-unit">
-                <input type="number" id="hk-stake-input" min="1" max="1000" step="1" value="10" />
-                <span class="unit">USDC</span>
-              </div>
-              <small>預設 10 USDC（允許 1 至 1000 USDC）</small>
-            </div>
-
-            <div class="field-row-2">
-              <div class="field-group">
-                <label for="hk-pricemin-input">觸發價格門檻 (%)</label>
-                <div class="input-with-unit">
-                  <input type="number" id="hk-pricemin-input" min="10" max="99" step="1" value="75" />
-                  <span class="unit">%</span>
-                </div>
-                <small>預設 75%（無價格上限）</small>
-              </div>
-
-              <div class="field-group">
-                <label for="hk-gatehour-input">每日開始監測時間 (HKT)</label>
-                <div class="input-with-unit">
-                  <input type="number" id="hk-gatehour-input" min="0" max="23" step="1" value="11" />
-                  <span class="unit">:00</span>
-                </div>
-                <small>預設香港時間 11:00</small>
-              </div>
-            </div>
-
-            <button type="button" id="hk-save-cfg-btn" class="btn btn-primary" style="width:100%;">
-              💾 儲存氣溫交易設定
-            </button>
-
-            <div class="alert-box alert-info">
-              <strong>觸發條件說明：</strong><br />
-              香港時間 <span id="hk-rule-hour-text">11:00</span> 之後，監測當日所有「是」選項；價格達到 <span id="hk-rule-prob-text">75%</span> 或以上時，立即以設定金額投注，沒有價格上限。同一市場日只自動投注第一個達標的「是」選項。
-            </div>
-          </div>
-        </section>
-
-        <!-- Right: Today's Polymarket HK Temperature Buckets -->
-        <section class="panel">
-          <div class="panel-header">
-            <div class="panel-title-group">
-              <h2 class="panel-title" id="hk-market-title">Highest temperature in Hong Kong today?</h2>
-              <span class="panel-hint">紅線標示 75% 自動觸發門檻 · 點擊右側按鈕可手動單筆買入該溫度區間</span>
-            </div>
-            <span class="badge badge-success" id="hk-market-status-badge">開放</span>
-          </div>
-
-          <div id="hk-outcomes-container" class="hk-outcomes-grid">
-            <div class="empty-cell">正在載入今日香港最高氣溫市場選項...</div>
-          </div>
-        </section>
-      </div>
-    </div>
-
-    <!-- Sub-view B: HK Temperature Historical Weather Comparison & Trade Records -->
-    <div id="hktab-records" class="hk-section-stack hidden">
-      <!-- HK Temp Trades Table -->
-      <section class="panel">
-        <div class="panel-header">
-          <div class="panel-title-group">
-            <h2 class="panel-title">📌 香港氣溫市場委託與注項紀錄</h2>
-            <span class="panel-hint">包含自動 75%+ 觸發與手動投注之氣溫合約</span>
-          </div>
-        </div>
-        <div class="table-scroll">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>時間 (HKT)</th>
-                <th>模式</th>
-                <th>市場日期</th>
-                <th>溫度選項</th>
-                <th>入場價格</th>
-                <th>目前價格</th>
-                <th>金額 (USDC)</th>
-                <th>張數</th>
-                <th>狀態</th>
-                <th>損益</th>
-              </tr>
-            </thead>
-            <tbody id="hk-trades-tbody">
-              <tr><td colspan="10" class="empty-cell">目前沒有進行中的氣溫注項</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- Weather Forecast vs Actual Comparison Table -->
-      <section class="panel">
-        <div class="panel-header">
-          <div class="panel-title-group">
-            <h2 class="panel-title">🌦️ 香港天文臺天氣對照表 (預測最高 vs 官方實測日最高)</h2>
-            <span class="panel-hint">最高溫出現時間是香港天文臺站開放數據「午夜至今最高氣溫」首次出現在十分鐘公布檔的時間，準確至約 10 分鐘（19:00 定案）</span>
-          </div>
-        </div>
-        <div class="table-scroll">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>日期</th>
-                <th>天文臺預測最高</th>
-                <th>預報發出時間</th>
-                <th>官方日最高</th>
-                <th>最高溫出現時間</th>
-                <th>預測誤差</th>
-              </tr>
-            </thead>
-            <tbody id="hk-weather-records-tbody">
-              <tr><td colspan="6" class="empty-cell">正在載入歷史天氣對照資料...</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </div>
-  </main>
-
   <!-- Native Modal 1: Polymarket CLOB Wallet & API Credentials -->
   <dialog id="clob-modal" class="modal-dialog" closedby="any">
     <div class="modal-content">
       <div class="modal-header">
         <div>
           <h3>🔐 Polymarket CLOB 真實自動下單設定</h3>
-          <p class="modal-subtitle">此憑證同時適用於「運動 70%+ 自動交易」與「香港氣溫 75%+ 自動交易」</p>
+          <p class="modal-subtitle">此憑證同時適用於「運動 70%+ 自動交易」與「香港氣溫 70%+ 自動交易」</p>
         </div>
         <button type="button" id="close-clob-modal-btn" class="btn-icon" aria-label="關閉視窗">✕</button>
       </div>
@@ -659,9 +555,8 @@
         <div class="step-card">
           <h4>2. 最省錢的做法：二合一單一引擎 + Vercel 免費前端整合</h4>
           <ol>
-            <li><strong>合併後端（省下一半費用）</strong>：現在「香港氣溫交易 (`hk-temp-trading`)」與「運動 70%+ 交易 (`polysports`)」已經<strong>完全整合在同一個伺服器程序</strong>中！您可以把舊的獨立氣溫後端停用，只需保留一個實例即可同時跑兩個策略。</li>
+            <li><strong>合併後端（省下一半費用）</strong>：現在「香港氣溫 70%+ 交易 (`hk-temp-trading`)」與「運動 70%+ 交易 (`polysports`)」已經<strong>完全整合在同一個畫面與同一個伺服器程序</strong>中！您可以把舊的獨立氣溫後端停用，只需保留一個實例即可同時跑兩個策略。</li>
             <li><strong>掛載到您的 Vercel 專案</strong>：本倉庫已內建 <code>vercel.json</code> 反向代理設定，您可以直接在 Vercel 綁定 <code>jimlau0115/polysports-autobot</code>，統一用 Vercel 網址存取！</li>
-            <li><strong>完全免費替代方案</strong>：由於本專案包含標準 <code>Dockerfile</code>，若不想付 Railway 費用，也可將同一個 GitHub 倉庫免費部署至 <strong>Render (Free Web Service + 免費 UptimeRobot 每 5 分鐘喚醒)</strong>、<strong>Fly.io</strong> 或您自己的電腦/樹莓派本機常駐運行。</li>
           </ol>
         </div>
       </div>

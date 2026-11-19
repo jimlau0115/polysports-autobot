@@ -1318,3 +1318,89 @@ html, body {
   font-size: 11.5px;
   color: var(--text-secondary);
 }
+
+/* ============================================================
+   Unified All-in-One Dashboard Styles (Sports 70%+ & HK Temp 70%+)
+   ============================================================ */
+.kpi-grid-6 {
+  grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+}
+
+.kpi-inline-divider {
+  font-size: 15px;
+  color: var(--text-muted);
+  margin: 0 3px;
+}
+
+.kpi-secondary-val {
+  font-size: 16px;
+  font-weight: 700;
+  color: #60a5fa;
+}
+
+.strategy-grid-unified {
+  grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+}
+
+.field-group-hk {
+  background: rgba(16, 185, 129, 0.06);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.input-dual-inline {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.main-monitors-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+
+.hktemp-integrated-panel {
+  border-color: rgba(16, 185, 129, 0.35);
+}
+
+.hk-weather-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  padding: 12px 16px;
+  background: rgba(15, 23, 42, 0.55);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.hk-weather-pill {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+}
+
+.hk-wp-label {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.hk-weather-pill strong {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+.hk-weather-pill small {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
