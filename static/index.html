@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="zh-Hant" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <title>PolySports Quant 70%+ | Polymarket 運動自動交易系統</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <!-- Top Navigation & Master Control Bar -->
+  <header class="topbar">
+    <div class="brand-group">
+      <div class="brand-logo" aria-hidden="true">⚡</div>
+      <div>
+        <div class="brand-title-row">
+          <h1 class="brand-title">PolySports Quant</h1>
+          <span class="badge badge-accent">70%+ 勝率狙擊系統</span>
+        </div>
+        <p class="brand-subtitle">Polymarket 運動項目 24/7 全自動監測與即時投注終端</p>
+      </div>
+    </div>
+
+    <div class="topbar-controls">
+      <!-- Live Scanner Status Pill -->
+      <div class="status-pill" id="scanner-status-pill" title="WebSocket 與背景掃描引擎狀態">
+        <span class="pulse-dot" id="ws-dot"></span>
+        <span id="scanner-status-text">連線中...</span>
+      </div>
+
+      <!-- Data Source Switcher -->
+      <div class="control-inline">
+        <label for="data-source-select" class="sr-only">數據源模式</label>
+        <select id="data-source-select" class="select-compact" title="切換盤口數據來源">
+          <option value="AUTO">📡 數據源：自動 (優先官方 API)</option>
+          <option value="LIVE_API">🌐 數據源：強制 Polymarket API</option>
+          <option value="SIMULATION">🧪 數據源：動態運動模擬盤口</option>
+        </select>
+      </div>
+
+      <!-- Trading Mode Segmented Switch -->
+      <div class="segmented-control" role="group" aria-label="交易執行模式">
+        <button type="button" id="mode-paper-btn" class="seg-btn active">
+          🧪 模擬交易 (Paper)
+        </button>
+        <button type="button" id="mode-live-btn" class="seg-btn">
+          ⚡ 真實下單 (Live CLOB)
+        </button>
+      </div>
+
+      <!-- Master Auto-Bot Toggle -->
+      <button type="button" id="bot-toggle-btn" class="btn btn-bot-active">
+        <span id="bot-toggle-icon">🤖</span>
+        <span id="bot-toggle-label">自動投注：運行中</span>
+      </button>
+
+      <!-- Quick Action Buttons -->
+      <button type="button" id="sim-breakout-btn" class="btn btn-secondary" title="在模擬盤口中讓一場運動賽事瞬間突破 70% 勝率，測試機器人毫秒級自動下單">
+        📈 測試 70%+ 突破觸發
+      </button>
+      <button type="button" id="manual-scan-btn" class="btn btn-ghost" title="立即重新掃描盤口">
+        🔄 掃描
+      </button>
+      <button type="button" id="open-clob-modal-btn" class="btn btn-outline">
+        🔐 CLOB 錢包設定
+      </button>
+      <button type="button" id="open-deploy-modal-btn" class="btn btn-ghost" title="查看 Railway + GitHub 24/7 部署教學">
+        ☁️ 部署指南
+      </button>
+    </div>
+  </header>
+
+  <!-- Toast Notification Banner -->
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <main class="dashboard-container">
+    <!-- KPI Summary Strip -->
+    <section class="kpi-grid" aria-label="帳戶與策略即時指標">
+      <article class="kpi-card">
+        <div class="kpi-header">
+          <span class="kpi-label">模擬帳戶總淨值 (Total Equity)</span>
+          <button type="button" id="reset-paper-btn" class="btn-link" title="重置模擬帳戶資金與持倉">重置帳戶</button>
+        </div>
+        <div class="kpi-value" id="kpi-equity">$1,000.00</div>
+        <div class="kpi-sub">
+          可用現金 <strong id="kpi-cash">$1,000.00</strong> · 持倉市值 <strong id="kpi-open-value">$0.00</strong>
+        </div>
+      </article>
+
+      <article class="kpi-card">
+        <div class="kpi-header">
+          <span class="kpi-label">累計總損益 (Total PnL / ROI)</span>
+          <span class="badge" id="kpi-roi-badge">0.00%</span>
+        </div>
+        <div class="kpi-value" id="kpi-total-pnl">$0.00</div>
+        <div class="kpi-sub">
+          未實現 <span id="kpi-unrealized">$0.00</span> · 已實現 <span id="kpi-realized">$0.00</span>
+        </div>
+      </article>
+
+      <article class="kpi-card">
+        <div class="kpi-header">
+          <span class="kpi-label">活躍持倉 &amp; 歷史勝率</span>
+          <span class="kpi-tag" id="kpi-winrate-tag">勝率 --%</span>
+        </div>
+        <div class="kpi-value" id="kpi-positions-count">0 / 15 倉位</div>
+        <div class="kpi-sub">
+          已結算 <strong id="kpi-closed-stats">0 勝 0 敗</strong> · 投入中 <strong id="kpi-invested">$0.00</strong>
+        </div>
+      </article>
+
+      <article class="kpi-card">
+        <div class="kpi-header">
+          <span class="kpi-label">今日自動投注預算使用率</span>
+          <span class="kpi-tag" id="kpi-budget-pct">0%</span>
+        </div>
+        <div class="kpi-value" id="kpi-daily-spend">$0.00 / $300</div>
+        <div class="progress-track">
+          <div class="progress-fill" id="kpi-budget-bar" style="width: 0%"></div>
+        </div>
+      </article>
+
+      <article class="kpi-card kpi-card-highlight">
+        <div class="kpi-header">
+          <span class="kpi-label">運動盤口雷達 (&gt;= 70% 勝率)</span>
+          <span class="badge badge-success" id="kpi-source-badge">SCANNING</span>
+        </div>
+        <div class="kpi-value" id="kpi-markets-summary">0 / 0 場達標</div>
+        <div class="kpi-sub" id="kpi-active-rule-summary">
+          條件：勝率 70%~95% 立即買入 $25 USDC
+        </div>
+      </article>
+    </section>
+
+    <!-- Strategy & Risk Control Configuration Drawer/Card -->
+    <section class="panel strategy-panel">
+      <div class="panel-header">
+        <div class="panel-title-group">
+          <h2 class="panel-title">🎯 70%+ 自動投注策略與風控規則設定</h2>
+          <span class="panel-hint">當運動賽事任一選項勝率落入目標區間且通過流動性檢驗時，系統將於毫秒內自動建立倉位</span>
+        </div>
+        <div class="panel-actions">
+          <button type="button" id="save-config-btn" class="btn btn-primary">
+            💾 儲存並立即套用規則
+          </button>
+        </div>
+      </div>
+
+      <form id="strategy-form" class="strategy-grid">
+        <div class="field-group">
+          <label for="cfg-min-prob">最低觸發勝率 (%)</label>
+          <div class="input-with-unit">
+            <input type="number" id="cfg-min-prob" min="10" max="98" step="0.5" value="70" required />
+            <span class="unit">%</span>
+          </div>
+          <small>預設 70%：勝率 &gt;= 此數值立即觸發</small>
+        </div>
+
+        <div class="field-group">
+          <label for="cfg-max-prob">最高勝率上限 (%)</label>
+          <div class="input-with-unit">
+            <input type="number" id="cfg-max-prob" min="50" max="99.5" step="0.5" value="95" required />
+            <span class="unit">%</span>
+          </div>
+          <small>避開 98%~99% 利潤極微薄的垃圾尾盤</small>
+        </div>
+
+        <div class="field-group">
+          <label for="cfg-bet-amount">單筆固定投注額 (USDC)</label>
+          <div class="input-with-unit">
+            <input type="number" id="cfg-bet-amount" min="1" max="10000" step="1" value="25" required />
+            <span class="unit">USDC</span>
+          </div>
+          <small>每次觸發 70%+ 條件時買入的金額</small>
+        </div>
+
+        <div class="field-group">
+          <label for="cfg-daily-budget">每日投注總預算上限</label>
+          <div class="input-with-unit">
+            <input type="number" id="cfg-daily-budget" min="10" max="100000" step="10" value="300" required />
+            <span class="unit">USDC</span>
+          </div>
+          <small>單日累計下單達此金額後自動暫停新單</small>
+        </div>
+
+        <div class="field-group">
+          <label for="cfg-min-liquidity">最低盤口流動性門檻</label>
+          <div class="input-with-unit">
+            <input type="number" id="cfg-min-liquidity" min="0" max="1000000" step="100" value="1500" required />
+            <span class="unit">USDC</span>
+          </div>
+          <small>過濾深度不足、容易滑價的冷門賽事</small>
+        </div>
+
+        <div class="field-group">
+          <label for="cfg-max-spread">最大允許買賣點差 (%)</label>
+          <div class="input-with-unit">
+            <input type="number" id="cfg-max-spread" min="0.5" max="25" step="0.5" value="5.0" required />
+            <span class="unit">%</span>
+          </div>
+          <small>Best Ask - Best Bid 點差上限保護</small>
+        </div>
+
+        <div class="field-group">
+          <label for="cfg-tp-prob">自動停利出場勝率 (%)</label>
+          <div class="input-with-unit">
+            <input type="checkbox" id="cfg-tp-enabled" checked title="啟用自動停利" />
+            <input type="number" id="cfg-tp-prob" min="75" max="99.5" step="0.5" value="96" />
+            <span class="unit">%</span>
+          </div>
+          <small>勝率升至 96% 時自動平倉鎖定獲利</small>
+        </div>
+
+        <div class="field-group">
+          <label for="cfg-sl-prob">自動停損出場勝率 (%)</label>
+          <div class="input-with-unit">
+            <input type="checkbox" id="cfg-sl-enabled" checked title="啟用自動停損" />
+            <input type="number" id="cfg-sl-prob" min="5" max="69" step="1" value="52" />
+            <span class="unit">%</span>
+          </div>
+          <small>若球隊被逆轉跌破 52% 時自動停損</small>
+        </div>
+
+        <div class="field-group">
+          <label for="cfg-scan-interval">背景掃描頻率 (秒)</label>
+          <div class="input-with-unit">
+            <input type="number" id="cfg-scan-interval" min="2" max="120" step="1" value="5" required />
+            <span class="unit">秒</span>
+          </div>
+          <small>24/7 常駐背景輪詢間隔 (建議 3~5 秒)</small>
+        </div>
+
+        <div class="field-group">
+          <label for="cfg-max-positions">最大同時持倉數</label>
+          <div class="input-with-unit">
+            <input type="number" id="cfg-max-positions" min="1" max="100" step="1" value="15" required />
+            <span class="unit">場</span>
+          </div>
+          <small>加上同場比賽防重複下注保護</small>
+        </div>
+      </form>
+    </section>
+
+    <!-- Main Two-Column Workspace: Left = Sports Market Radar, Right = Positions & Live Terminal -->
+    <div class="workspace-grid">
+      <!-- Left Column: Live Polymarket Sports Scanner Table -->
+      <section class="panel markets-panel">
+        <div class="panel-header">
+          <div class="panel-title-group">
+            <h2 class="panel-title">🏟️ Polymarket 運動項目即時勝率監測表</h2>
+            <span class="panel-hint" id="last-scan-timestamp">最後掃描：剛才</span>
+          </div>
+
+          <div class="filter-controls">
+            <label class="checkbox-pill">
+              <input type="checkbox" id="filter-only-70" />
+              <span>🔥 僅看 &gt;= 70% 選項</span>
+            </label>
+            <input type="search" id="market-search-input" class="input-search" placeholder="搜尋球隊、聯賽或賽事名稱..." />
+          </div>
+        </div>
+
+        <!-- Sport Category Filter Bar -->
+        <div class="sport-tabs" id="sport-tabs" role="tablist">
+          <button type="button" class="sport-tab active" data-sport="ALL">全部運動</button>
+          <button type="button" class="sport-tab" data-sport="NBA">🏀 NBA 籃球</button>
+          <button type="button" class="sport-tab" data-sport="SOCCER">⚽ 足球</button>
+          <button type="button" class="sport-tab" data-sport="NFL">🏈 NFL 美足</button>
+          <button type="button" class="sport-tab" data-sport="MLB">⚾ MLB 棒球</button>
+          <button type="button" class="sport-tab" data-sport="NHL">🏒 NHL 冰球</button>
+          <button type="button" class="sport-tab" data-sport="TENNIS">🎾 網球</button>
+          <button type="button" class="sport-tab" data-sport="UFC">🥊 UFC 格鬥</button>
+          <button type="button" class="sport-tab" data-sport="ESPORTS">🎮 電競</button>
+        </div>
+
+        <!-- Responsive Markets Table -->
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>運動 / 賽事與盤口問題</th>
+                <th>各選項即時勝率 (Implied Probability)</th>
+                <th>盤口深度 &amp; 點差</th>
+                <th>系統風控判定狀態</th>
+                <th class="text-right">手動操作</th>
+              </tr>
+            </thead>
+            <tbody id="markets-tbody">
+              <tr>
+                <td colspan="5" class="empty-cell">正在載入 Polymarket 運動賽事數據...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Right Column: Active Positions, History & Real-time Execution Log -->
+      <aside class="side-column">
+        <!-- Positions & History Panel -->
+        <section class="panel positions-panel">
+          <div class="panel-header">
+            <div class="tab-buttons" role="tablist">
+              <button type="button" class="tab-btn active" id="tab-open-pos-btn">
+                📌 目前持倉 (<span id="open-pos-badge">0</span>)
+              </button>
+              <button type="button" class="tab-btn" id="tab-closed-pos-btn">
+                📜 已結算紀錄 (<span id="closed-pos-badge">0</span>)
+              </button>
+            </div>
+          </div>
+
+          <div id="open-positions-view" class="positions-list"></div>
+          <div id="closed-positions-view" class="positions-list hidden"></div>
+        </section>
+
+        <!-- Real-Time Execution Audit Terminal -->
+        <section class="panel logs-panel">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h2 class="panel-title">⚡ 24/7 自動交易執行日誌</h2>
+            </div>
+            <span class="badge badge-outline" id="log-count-badge">即時更新</span>
+          </div>
+          <div id="trade-logs-list" class="logs-terminal" role="log" aria-live="polite"></div>
+        </section>
+      </aside>
+    </div>
+  </main>
+
+  <!-- Native Modal 1: Polymarket CLOB Wallet & API Credentials -->
+  <dialog id="clob-modal" class="modal-dialog" closedby="any">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div>
+          <h3>🔐 Polymarket CLOB 真實自動下單設定</h3>
+          <p class="modal-subtitle">設定 Polygon 錢包與 API 憑證以啟用真實資金自動買入（未設定時預設安全運行於 Paper 模擬交易）</p>
+        </div>
+        <button type="button" id="close-clob-modal-btn" class="btn-icon" aria-label="關閉視窗">✕</button>
+      </div>
+
+      <form id="clob-form" class="modal-body">
+        <div class="alert-box alert-info" id="clob-verify-banner">
+          💡 提示：您的私鑰僅儲存於本機或您專屬的 Railway 伺服器環境中，用於簽署 Polygon (Chain ID 137) EIP-712 CLOB 訂單。
+        </div>
+
+        <div class="field-group">
+          <label for="clob-private-key">Polygon 錢包私鑰 (POLY_PRIVATE_KEY)</label>
+          <input type="password" id="clob-private-key" placeholder="0x... (匯出自 Polymarket 綁定錢包或 MetaMask)" autocomplete="off" />
+          <small id="clob-pk-status">目前狀態：尚未設定</small>
+        </div>
+
+        <div class="field-group">
+          <label for="clob-funder-address">Polymarket Proxy 錢包地址 (POLY_FUNDER_ADDRESS，選填)</label>
+          <input type="text" id="clob-funder-address" placeholder="0x... (Polymarket 網頁右上角顯示的存款地址)" autocomplete="off" />
+          <small>若使用 Email/Magic 或瀏覽器錢包登入 Polymarket，請填入網頁上的 Proxy Address</small>
+        </div>
+
+        <div class="field-group">
+          <label for="clob-sig-type">簽名帳戶類型 (Signature Type)</label>
+          <select id="clob-sig-type">
+            <option value="1">1 - Polymarket Proxy / Email / Magic Wallet (最常見)</option>
+            <option value="2">2 - Gnosis Safe Proxy (新式瀏覽器錢包代理)</option>
+            <option value="0">0 - 標準 EOA 錢包直接交易 (直接持有 USDC.e)</option>
+          </select>
+        </div>
+
+        <div class="field-row-3">
+          <div class="field-group">
+            <label for="clob-api-key">L2 API Key (選填，可自動推導)</label>
+            <input type="text" id="clob-api-key" placeholder="留空將由私鑰自動生成" autocomplete="off" />
+          </div>
+          <div class="field-group">
+            <label for="clob-api-secret">L2 API Secret (選填)</label>
+            <input type="password" id="clob-api-secret" placeholder="留空自動生成" autocomplete="off" />
+          </div>
+          <div class="field-group">
+            <label for="clob-api-passphrase">L2 Passphrase (選填)</label>
+            <input type="password" id="clob-api-passphrase" placeholder="留空自動生成" autocomplete="off" />
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" id="verify-clob-btn" class="btn btn-secondary">
+            🔍 測試 CLOB 連線與憑證
+          </button>
+          <button type="submit" class="btn btn-primary">
+            💾 儲存憑證設定
+          </button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- Native Modal 2: Railway + GitHub 24/7 Deployment Guide -->
+  <dialog id="deploy-modal" class="modal-dialog" closedby="any">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div>
+          <h3>☁️ Railway + GitHub 24/7 全天候雲端部署指南</h3>
+          <p class="modal-subtitle">為什麼選擇 Railway？Vercel Serverless 會在數秒後休眠中斷，而 Railway 支援 24/7 常駐背景掃描與即時下單</p>
+        </div>
+        <button type="button" id="close-deploy-modal-btn" class="btn-icon" aria-label="關閉視窗">✕</button>
+      </div>
+
+      <div class="modal-body deploy-steps">
+        <div class="step-card">
+          <h4>步驟 1：推送專案至 GitHub</h4>
+          <p>本專案已內建完整 <code>Dockerfile</code>、<code>railway.json</code>、<code>Procfile</code> 與 <code>requirements.txt</code>。在專案資料夾執行：</p>
+          <pre><code>git init
+git add .
+git commit -m "Initial PolySports 70%+ Auto-Trading System"
+git branch -M main
+git remote add origin https://github.com/&lt;您的帳號&gt;/polysports-autobot.git
+git push -u origin main</code></pre>
+        </div>
+
+        <div class="step-card">
+          <h4>步驟 2：在 Railway 一鍵連接 GitHub 倉庫</h4>
+          <ol>
+            <li>登入 <a href="https://railway.app" target="_blank" rel="noopener">Railway.app</a>，點擊 <strong>New Project → Deploy from GitHub repo</strong>。</li>
+            <li>選擇剛建立的 <code>polysports-autobot</code> 倉庫，Railway 會自動偵測 <code>railway.json</code> 與 <code>Dockerfile</code> 並啟動常駐服務。</li>
+            <li>在 Railway 服務的 <strong>Settings → Networking</strong> 點擊 <strong>Generate Domain</strong> 即可獲得您的專屬監控網址！</li>
+          </ol>
+        </div>
+
+        <div class="step-card">
+          <h4>步驟 3：環境變數設定 (Railway Variables)</h4>
+          <p>若要啟用真實下單，可在網頁右上角「CLOB 錢包設定」輸入，或在 Railway 的 <strong>Variables</strong> 設定：</p>
+          <pre><code>TRADING_MODE=PAPER
+DATA_SOURCE_MODE=AUTO
+MIN_WIN_PROB=0.70
+MAX_WIN_PROB=0.95
+BET_AMOUNT_USDC=25
+POLY_PRIVATE_KEY=0x您的Polygon私鑰
+POLY_FUNDER_ADDRESS=0x您的Polymarket代理地址
+POLY_SIGNATURE_TYPE=1</code></pre>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
