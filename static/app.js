@@ -356,7 +356,7 @@
         : "🧪 24/7 雙引擎自動交易日誌 (模擬盤 PAPER 帳本)";
     }
 
-    // 3. Unified Strategy Form (Sports 70%+ & HK Temp 70%+)
+    // 3. Unified Strategy Form (Sports & HK Temp)
     if (!formDirty) {
       $("cfg-min-prob").value = (config.min_win_prob * 100).toFixed(1).replace(/\.0$/, "");
       $("cfg-max-prob").value = (config.max_win_prob * 100).toFixed(1).replace(/\.0$/, "");
@@ -389,13 +389,161 @@
       $("clob-sig-type").value = String(clob_status.signature_type ?? 1);
     }
 
-    // 5. Render HK Temperature Monitor, Sports Markets Table, Positions, and Logs (Scoped to activeLedgerMode)
+    // 5. Render HK Temperature Monitor, Sports Markets Table, Positions, Logs, and Live Strategy Descriptions
     if (hk_temp) {
       renderHkTempModule(hk_temp);
     }
     renderMarketsTable(state.markets || [], config);
     renderPositions(activeData.open_positions || [], activeData.closed_positions || [], hkTrades);
     renderLogs(activeData.logs || []);
+    updateStrategyDescriptionsFromInputs();
+  }
+
+  function updateStrategyDescriptionsFromInputs() {
+    const minProbStr = ($("cfg-min-prob")?.value || "70").trim();
+    const maxProbStr = ($("cfg-max-prob")?.value || "95").trim();
+    const betAmt = Number($("cfg-bet-amount")?.value || 25);
+    const dailyBudget = Number($("cfg-daily-budget")?.value || 300);
+    const minLiq = Number($("cfg-min-liquidity")?.value || 1500);
+    const maxSpreadStr = ($("cfg-max-spread")?.value || "5.0").trim();
+    const tpEnabled = Boolean($("cfg-tp-enabled")?.checked);
+    const tpProbStr = ($("cfg-tp-prob")?.value || "96").trim();
+    const slEnabled = Boolean($("cfg-sl-enabled")?.checked);
+    const slProbStr = ($("cfg-sl-prob")?.value || "52").trim();
+
+    const hkPriceMinStr = ($("hk-pricemin-input")?.value || "70").trim();
+    const hkStake = Number($("hk-stake-input")?.value || 10);
+    const hkGateHour = Number($("hk-gatehour-input")?.value ?? 11);
+    const hkGateStr = `${String(hkGateHour).padStart(2, "0")}:00`;
+
+    const scanSec = Number($("cfg-scan-interval")?.value || 5);
+    const maxPos = Number($("cfg-max-positions")?.value || 15);
+    const maxBetsPerDay = Math.max(1, Math.floor(dailyBudget / Math.max(1, betAmt)));
+
+    // 1. Update all 12 <small> field descriptions directly below inputs
+    if ($("desc-min-prob")) {
+      $("desc-min-prob").textContent = `當運動選項勝率 >= ${minProbStr}% 時立即觸發買入`;
+    }
+    if ($("desc-max-prob")) {
+      $("desc-max-prob").textContent = `高於 ${maxProbStr}% 不追高（目標區間 ${minProbStr}% ~ ${maxProbStr}%）`;
+    }
+    if ($("desc-bet-amount")) {
+      $("desc-bet-amount").textContent = `運動達標時，每場自動買入 $${betAmt.toLocaleString()} USDC`;
+    }
+    if ($("desc-daily-budget")) {
+      $("desc-daily-budget").textContent = `運動單日上限 $${dailyBudget.toLocaleString()} USDC（約可投 ${maxBetsPerDay} 場）`;
+    }
+    if ($("desc-min-liquidity")) {
+      $("desc-min-liquidity").textContent = `僅交易深度 >= $${minLiq.toLocaleString()} USDC 的賽事`;
+    }
+    if ($("desc-max-spread")) {
+      $("desc-max-spread").textContent = `買賣價差 > ${maxSpreadStr}% 時自動跳過不買`;
+    }
+    if ($("desc-tp-prob")) {
+      $("desc-tp-prob").textContent = tpEnabled
+        ? `升至 ${tpProbStr}% 自動獲利了結`
+        : "自動停利已關閉（持有至結算或手動平倉）";
+    }
+    if ($("desc-sl-prob")) {
+      $("desc-sl-prob").textContent = slEnabled
+        ? `跌破 ${slProbStr}% 自動停損平倉`
+        : "自動停損已關閉（跌破不自動賣出）";
+    }
+    if ($("desc-hk-pricemin")) {
+      $("desc-hk-pricemin").textContent = `溫度區間達 ${hkPriceMinStr}% 立即買入（無上限）`;
+    }
+    if ($("desc-hk-stake")) {
+      $("desc-hk-stake").textContent = `每日首個達標溫度選項買入 $${hkStake.toLocaleString()} USDC`;
+    }
+    if ($("desc-hk-gatehour")) {
+      $("desc-hk-gatehour").textContent = `香港時間 ${hkGateStr} 後開始自動監測`;
+    }
+    if ($("desc-scan-positions")) {
+      $("desc-scan-positions").textContent = `每 ${scanSec} 秒掃描一次 · 最多同時持有 ${maxPos} 倉`;
+    }
+
+    // 2. Update Strategy Panel Header Title, Subtitle & Bottom Summary Bar
+    if ($("strategy-panel-title")) {
+      $("strategy-panel-title").textContent = `🎯 雙引擎自動投注策略與風控規則設定 (運動 ${minProbStr}%+ · 香港氣溫 ${hkPriceMinStr}%+)`;
+    }
+    if ($("strategy-panel-hint")) {
+      $("strategy-panel-hint").textContent = `即時規則：運動選項介於 ${minProbStr}% ~ ${maxProbStr}% 自動買入 $${betAmt} USDC；香港氣溫於 ${hkGateStr} HKT 後 >= ${hkPriceMinStr}% 自動買入 $${hkStake} USDC`;
+    }
+    if ($("strategy-live-summary")) {
+      const tpSlText =
+        (tpEnabled ? `升至 ${tpProbStr}% 自動停利` : "停利關閉") +
+        " / " +
+        (slEnabled ? `跌破 ${slProbStr}% 自動停損` : "停損關閉");
+      $("strategy-live-summary").innerHTML =
+        `📋 <strong>目前策略描述：</strong>` +
+        `【🏟️ 運動賽事】當選項勝率介於 <strong>${escapeHtml(minProbStr)}% ~ ${escapeHtml(maxProbStr)}%</strong>` +
+        `（流動性 &gt;= <strong>$${minLiq.toLocaleString()}</strong>、點差 &lt;= <strong>${escapeHtml(maxSpreadStr)}%</strong>）時，` +
+        `以最接近結束賽事優先自動買入 <strong>$${betAmt.toLocaleString()} USDC</strong>` +
+        `（單日上限 <strong>$${dailyBudget.toLocaleString()}</strong>，${escapeHtml(tpSlText)}）；` +
+        `【🌡️ 香港氣溫】於香港時間 <strong>${escapeHtml(hkGateStr)}</strong> 後，` +
+        `當任一溫度區間達 <strong>${escapeHtml(hkPriceMinStr)}%+</strong> 即自動買入 <strong>$${hkStake.toLocaleString()} USDC</strong>` +
+        `（每 <strong>${scanSec} 秒</strong> 掃描一次，最多持有 <strong>${maxPos} 倉</strong>）。`;
+    }
+
+    // 3. Update Topbar, KPI labels, Buttons & Monitor Headers below Strategy Panel
+    if ($("header-brand-badge")) {
+      $("header-brand-badge").textContent = `運動 ${minProbStr}%+ & 香港氣溫 ${hkPriceMinStr}%+ 雙引擎合一`;
+    }
+    if ($("view-hkonly-label")) {
+      $("view-hkonly-label").textContent = `🌡️ 專注香港氣溫 (${hkPriceMinStr}%+)`;
+    }
+    if ($("view-sportsonly-label")) {
+      $("view-sportsonly-label").textContent = `🏟️ 專注運動賽事 (${minProbStr}%+)`;
+    }
+    if ($("kpi-sports-radar-label")) {
+      $("kpi-sports-radar-label").textContent = `🏟️ 運動賽事雷達 (>= ${minProbStr}%)`;
+    }
+    if ($("kpi-hk-gate-label")) {
+      $("kpi-hk-gate-label").textContent = `⚡ 香港氣溫 ${hkPriceMinStr}%+ 自動閘門`;
+    }
+    if ($("hk-gate-countdown")) {
+      $("hk-gate-countdown").textContent = `${hkGateStr} HKT 開閘 · 門檻 >= ${hkPriceMinStr}% 買入 $${hkStake}`;
+    }
+    if ($("sim-breakout-btn")) {
+      $("sim-breakout-btn").textContent = `📈 測試 ${minProbStr}%+ 觸發`;
+    }
+    if ($("bot-toggle-label") && appState?.config) {
+      $("bot-toggle-label").textContent = appState.config.bot_enabled
+        ? `運動 ${minProbStr}%+ 自動：運行中`
+        : `運動 ${minProbStr}%+ 自動：已暫停`;
+    }
+    if ($("hk-auto-toggle-btn") && appState?.hk_temp?.engine) {
+      $("hk-auto-toggle-btn").innerHTML = appState.hk_temp.engine.autoEnabled
+        ? `<span>🌡️ 氣溫 ${hkPriceMinStr}%+ 自動：運行中</span>`
+        : `<span>⏸️ 氣溫 ${hkPriceMinStr}%+ 自動：已暫停</span>`;
+    }
+    if ($("hk-subnav-overview-btn")) {
+      $("hk-subnav-overview-btn").textContent = `📊 今日溫度區間 (${hkPriceMinStr}%+ 監測)`;
+    }
+    if ($("hk-rule-prob-text")) {
+      $("hk-rule-prob-text").textContent = `${hkPriceMinStr}%`;
+    }
+    if ($("hk-phase-message")) {
+      $("hk-phase-message").textContent = `香港時間 ${hkGateStr} 之後，監測當日所有「是」選項；價格達到 ${hkPriceMinStr}% 或以上時立即以 $${hkStake} USDC 自動投注（無價格上限）。`;
+    }
+    if ($("sports-monitor-title")) {
+      $("sports-monitor-title").textContent = `🏟️ Polymarket 全球運動賽事 ${minProbStr}%+ 即時勝率監測表`;
+    }
+    if ($("filter-only-70-label")) {
+      $("filter-only-70-label").textContent = `🔥 僅看 >= ${minProbStr}% 選項`;
+    }
+
+    // Update red threshold markers & manual bet button labels inside HK Temp outcome cards
+    const markerLeft = Math.max(5, Math.min(99, Number(hkPriceMinStr) || 70)).toFixed(1);
+    document.querySelectorAll(".hk-threshold-marker").forEach((el) => {
+      el.style.left = `${markerLeft}%`;
+    });
+    document.querySelectorAll(".hk-bar-wrap").forEach((el) => {
+      el.title = `紅線為 ${hkPriceMinStr}% 自動觸發門檻`;
+    });
+    document.querySelectorAll(".hk-manual-bet-btn").forEach((btn) => {
+      btn.textContent = `⚡ 投注 $${hkStake}`;
+    });
   }
 
   function renderHkTempModule(hk) {
@@ -696,10 +844,15 @@
     if ($("hk-pos-badge")) $("hk-pos-badge").textContent = hkTrades.length;
     if ($("closed-pos-badge")) $("closed-pos-badge").textContent = closedPositions.length;
 
+    const minProbStr = ($("cfg-min-prob")?.value || "70").trim();
+    const hkPriceMinStr = ($("hk-pricemin-input")?.value || "70").trim();
+    const hkGateHour = Number($("hk-gatehour-input")?.value ?? 11);
+    const hkGateStr = `${String(hkGateHour).padStart(2, "0")}:00`;
+
     const openEl = $("open-positions-view");
     if (openEl) {
       if (openPositions.length === 0) {
-        openEl.innerHTML = `<div class="empty-cell">目前尚無運動活躍持倉。當運動項目勝率 &gt;= 70% 時將自動建倉。</div>`;
+        openEl.innerHTML = `<div class="empty-cell">目前尚無運動活躍持倉。當運動項目勝率 &gt;= ${escapeHtml(minProbStr)}% 時將自動建倉。</div>`;
       } else {
         openEl.innerHTML = openPositions
           .map((p) => {
@@ -719,7 +872,7 @@
                   <div>持有股數：<strong>${Number(p.shares).toFixed(2)}</strong></div>
                   <div>投入本金：<strong>$${Number(p.amount_usdc).toFixed(2)}</strong></div>
                   <div>勝出可領：<strong>$${Number(p.shares).toFixed(2)}</strong></div>
-                  <div>觸發方式：<strong>${p.trigger_type === "AUTO_70_RULE" ? "70%+自動" : "手動"}</strong></div>
+                  <div>觸發方式：<strong>${p.trigger_type === "AUTO_70_RULE" ? "自動觸發" : "手動"}</strong></div>
                 </div>
                 <div class="pos-actions">
                   <button type="button" class="btn btn-xs btn-outline pos-close-btn" data-id="${p.id}" data-action="MARKET_CLOSE">
@@ -742,7 +895,7 @@
     const hkEl = $("hk-positions-view");
     if (hkEl) {
       if (hkTrades.length === 0) {
-        hkEl.innerHTML = `<div class="empty-cell">目前尚無香港氣溫注項。當 11:00 HKT 後溫度區間勝率 &gt;= 70% 時將自動建倉。</div>`;
+        hkEl.innerHTML = `<div class="empty-cell">目前尚無香港氣溫注項。當 ${escapeHtml(hkGateStr)} HKT 後溫度區間勝率 &gt;= ${escapeHtml(hkPriceMinStr)}% 時將自動建倉。</div>`;
       } else {
         hkEl.innerHTML = hkTrades
           .map((t) => {
@@ -944,42 +1097,76 @@
       }
     });
 
-    // Unified Strategy Form (Saves BOTH Sports 70%+ and HK Temp 70%+ configs)
+    // Unified Strategy Form (Real-time description updates + auto-sync + manual save)
     const form = $("strategy-form");
-    form?.addEventListener("input", () => {
-      formDirty = true;
-    });
+    let autoSaveTimer = null;
 
-    $("save-config-btn")?.addEventListener("click", async () => {
+    async function saveStrategyConfig(silent = false) {
+      if (autoSaveTimer) {
+        clearTimeout(autoSaveTimer);
+        autoSaveTimer = null;
+      }
       try {
+        const minP = Number($("cfg-min-prob").value) || 70;
+        const maxP = Number($("cfg-max-prob").value) || 95;
+        const hkP = Number($("hk-pricemin-input").value) || 70;
         const sportsPayload = {
-          min_win_prob: Number($("cfg-min-prob").value) / 100.0,
-          max_win_prob: Number($("cfg-max-prob").value) / 100.0,
-          bet_amount_usdc: Number($("cfg-bet-amount").value),
-          daily_budget_usdc: Number($("cfg-daily-budget").value),
-          min_liquidity_usdc: Number($("cfg-min-liquidity").value),
-          max_spread: Number($("cfg-max-spread").value) / 100.0,
+          min_win_prob: minP / 100.0,
+          max_win_prob: maxP / 100.0,
+          bet_amount_usdc: Number($("cfg-bet-amount").value) || 25,
+          daily_budget_usdc: Number($("cfg-daily-budget").value) || 300,
+          min_liquidity_usdc: Number($("cfg-min-liquidity").value) || 0,
+          max_spread: (Number($("cfg-max-spread").value) || 5.0) / 100.0,
           auto_take_profit_enabled: $("cfg-tp-enabled").checked,
-          take_profit_prob: Number($("cfg-tp-prob").value) / 100.0,
+          take_profit_prob: (Number($("cfg-tp-prob").value) || 96) / 100.0,
           auto_stop_loss_enabled: $("cfg-sl-enabled").checked,
-          stop_loss_prob: Number($("cfg-sl-prob").value) / 100.0,
-          scan_interval_sec: Number($("cfg-scan-interval").value),
-          max_open_positions: Number($("cfg-max-positions").value),
+          stop_loss_prob: (Number($("cfg-sl-prob").value) || 52) / 100.0,
+          scan_interval_sec: Number($("cfg-scan-interval").value) || 5,
+          max_open_positions: Number($("cfg-max-positions").value) || 15,
         };
         const hkPayload = {
-          stake_usdc: Number($("hk-stake-input").value),
-          price_min: Number($("hk-pricemin-input").value) / 100.0,
-          gate_hour_hkt: Number($("hk-gatehour-input").value),
+          stake_usdc: Number($("hk-stake-input").value) || 10,
+          price_min: hkP / 100.0,
+          gate_hour_hkt: Number($("hk-gatehour-input").value ?? 11),
         };
 
         await apiPost("/api/config", sportsPayload);
         const res = await apiPost("/api/hk-temp/config", hkPayload);
         formDirty = false;
         renderState(res.state);
-        showToast("✅ 運動賽事 70%+ 與香港氣溫 70%+ 雙引擎設定已同步儲存並生效！");
+        if (!silent) {
+          showToast(`✅ 雙引擎設定已儲存生效：運動 ${minP}%~${maxP}% ($${sportsPayload.bet_amount_usdc}) · 氣溫 ${hkP}%+ ($${hkPayload.stake_usdc})`);
+        }
       } catch (err) {
-        showToast(`❌ 儲存失敗：${err.message}`);
+        if (!silent) {
+          showToast(`❌ 儲存失敗：${err.message}`);
+        }
       }
+    }
+
+    function onStrategyInputChanged() {
+      formDirty = true;
+      updateStrategyDescriptionsFromInputs();
+      if (appState) {
+        const previewConfig = {
+          ...appState.config,
+          min_win_prob: (Number($("cfg-min-prob")?.value) || 70) / 100.0,
+          max_win_prob: (Number($("cfg-max-prob")?.value) || 95) / 100.0,
+          bet_amount_usdc: Number($("cfg-bet-amount")?.value) || 25,
+        };
+        renderMarketsTable(appState.markets || [], previewConfig);
+      }
+      if (autoSaveTimer) clearTimeout(autoSaveTimer);
+      autoSaveTimer = setTimeout(() => {
+        saveStrategyConfig(true);
+      }, 700);
+    }
+
+    form?.addEventListener("input", onStrategyInputChanged);
+    form?.addEventListener("change", onStrategyInputChanged);
+
+    $("save-config-btn")?.addEventListener("click", async () => {
+      await saveStrategyConfig(false);
     });
 
     $("bot-toggle-btn")?.addEventListener("click", async () => {

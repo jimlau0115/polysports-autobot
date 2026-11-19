@@ -15,7 +15,7 @@
       <div>
         <div class="brand-title-row">
           <h1 class="brand-title">PolyQuant 70%+ Hub</h1>
-          <span class="badge badge-accent">運動 70%+ &amp; 香港氣溫 70%+ 雙引擎合一</span>
+          <span class="badge badge-accent" id="header-brand-badge">運動 70%+ &amp; 香港氣溫 70%+ 雙引擎合一</span>
         </div>
         <p class="brand-subtitle">Polymarket 24/7 全自動監測與毫秒級投注終端 · 香港時間 <span id="header-hkt-clock">--:--:--</span></p>
       </div>
@@ -27,11 +27,11 @@
         🔀 雙引擎整合總覽 (同屏)
       </button>
       <button type="button" id="view-hkonly-btn" class="module-tab" role="tab" aria-selected="false">
-        🌡️ 專注香港氣溫 (70%+)
+        <span id="view-hkonly-label">🌡️ 專注香港氣溫 (70%+)</span>
         <span class="badge badge-success" id="hktemp-nav-badge">HKO 即時</span>
       </button>
       <button type="button" id="view-sportsonly-btn" class="module-tab" role="tab" aria-selected="false">
-        🏟️ 專注運動賽事 (70%+)
+        <span id="view-sportsonly-label">🏟️ 專注運動賽事 (70%+)</span>
       </button>
     </div>
 
@@ -133,7 +133,7 @@
 
       <article class="kpi-card">
         <div class="kpi-header">
-          <span class="kpi-label">🏟️ 運動賽事雷達 (&gt;= 70%)</span>
+          <span class="kpi-label" id="kpi-sports-radar-label">🏟️ 運動賽事雷達 (&gt;= 70%)</span>
           <span class="badge badge-success" id="kpi-source-badge">LIVE</span>
         </div>
         <div class="kpi-value" id="kpi-markets-summary">0 / 0 場達標</div>
@@ -162,7 +162,7 @@
 
       <article class="kpi-card kpi-card-highlight">
         <div class="kpi-header">
-          <span class="kpi-label">⚡ 香港氣溫 70%+ 自動閘門</span>
+          <span class="kpi-label" id="kpi-hk-gate-label">⚡ 香港氣溫 70%+ 自動閘門</span>
           <span class="badge badge-accent" id="hk-poly-status-badge">Polymarket 即時</span>
         </div>
         <div class="kpi-value" id="hk-phase-label" style="font-size:17px;">即時監測中</div>
@@ -176,8 +176,8 @@
     <section class="panel strategy-panel">
       <div class="panel-header">
         <div class="panel-title-group">
-          <h2 class="panel-title">🎯 雙引擎 70%+ 自動投注策略與風控規則設定 (運動賽事 + 香港每日最高氣溫)</h2>
-          <span class="panel-hint">兩大系統共用資金池與 CLOB 憑證：運動選項 &gt;= 70% 或香港氣溫區間於 11:00 後 &gt;= 70% 即自動下單</span>
+          <h2 class="panel-title" id="strategy-panel-title">🎯 雙引擎 70%+ 自動投注策略與風控規則設定 (運動賽事 + 香港每日最高氣溫)</h2>
+          <span class="panel-hint" id="strategy-panel-hint">兩大系統共用資金池與 CLOB 憑證：運動選項 &gt;= 70% 或香港氣溫區間於 11:00 後 &gt;= 70% 即自動下單</span>
         </div>
         <div class="panel-actions">
           <button type="button" id="bot-toggle-btn" class="btn btn-bot-active">
@@ -187,7 +187,7 @@
           <button type="button" id="hk-auto-toggle-btn" class="btn btn-bot-active">
             <span>🌡️ 氣溫 70%+ 自動：運行中</span>
           </button>
-          <button type="button" id="sim-breakout-btn" class="btn btn-secondary" title="在運動模擬盤口中讓一場賽事瞬間突破 70% 勝率，測試機器人毫秒級自動下單">
+          <button type="button" id="sim-breakout-btn" class="btn btn-secondary" title="在運動模擬盤口中讓一場賽事瞬間突破門檻勝率，測試機器人毫秒級自動下單">
             📈 測試 70%+ 觸發
           </button>
           <button type="button" id="save-config-btn" class="btn btn-primary">
@@ -197,14 +197,14 @@
       </div>
 
       <form id="strategy-form" class="strategy-grid strategy-grid-unified">
-        <!-- Sports 70%+ Controls -->
+        <!-- Sports Controls -->
         <div class="field-group">
           <label for="cfg-min-prob">🏟️ [運動] 最低觸發勝率</label>
           <div class="input-with-unit">
             <input type="number" id="cfg-min-prob" min="10" max="98" step="0.5" value="70" required />
             <span class="unit">%</span>
           </div>
-          <small>預設 70%：運動勝率 &gt;= 此值觸發</small>
+          <small id="desc-min-prob">當運動選項勝率 &gt;= 70% 時立即觸發買入</small>
         </div>
 
         <div class="field-group">
@@ -213,7 +213,7 @@
             <input type="number" id="cfg-max-prob" min="50" max="99.5" step="0.5" value="95" required />
             <span class="unit">%</span>
           </div>
-          <small>避開 98%+ 利潤極微薄尾盤</small>
+          <small id="desc-max-prob">高於 95% 不追高（目標區間 70% ~ 95%）</small>
         </div>
 
         <div class="field-group">
@@ -222,7 +222,7 @@
             <input type="number" id="cfg-bet-amount" min="1" max="10000" step="1" value="25" required />
             <span class="unit">USDC</span>
           </div>
-          <small>運動達標時單筆買入金額</small>
+          <small id="desc-bet-amount">運動達標時，每場自動買入 $25 USDC</small>
         </div>
 
         <div class="field-group">
@@ -231,7 +231,7 @@
             <input type="number" id="cfg-daily-budget" min="10" max="100000" step="10" value="300" required />
             <span class="unit">USDC</span>
           </div>
-          <small>運動單日累計上限保護</small>
+          <small id="desc-daily-budget">運動單日上限 $300 USDC（約可投 12 場）</small>
         </div>
 
         <div class="field-group">
@@ -240,7 +240,7 @@
             <input type="number" id="cfg-min-liquidity" min="0" max="1000000" step="100" value="1500" required />
             <span class="unit">USDC</span>
           </div>
-          <small>過濾深度不足冷門盤</small>
+          <small id="desc-min-liquidity">僅交易深度 &gt;= $1,500 USDC 的賽事</small>
         </div>
 
         <div class="field-group">
@@ -249,7 +249,7 @@
             <input type="number" id="cfg-max-spread" min="0.5" max="25" step="0.5" value="5.0" required />
             <span class="unit">%</span>
           </div>
-          <small>買賣價差上限保護</small>
+          <small id="desc-max-spread">買賣價差 &gt; 5.0% 時自動跳過不買</small>
         </div>
 
         <div class="field-group">
@@ -259,7 +259,7 @@
             <input type="number" id="cfg-tp-prob" min="75" max="99.5" step="0.5" value="96" />
             <span class="unit">%</span>
           </div>
-          <small>升至 96% 自動獲利了結</small>
+          <small id="desc-tp-prob">升至 96% 自動獲利了結</small>
         </div>
 
         <div class="field-group">
@@ -269,17 +269,17 @@
             <input type="number" id="cfg-sl-prob" min="5" max="69" step="1" value="52" />
             <span class="unit">%</span>
           </div>
-          <small>跌破 52% 自動停損平倉</small>
+          <small id="desc-sl-prob">跌破 52% 自動停損平倉</small>
         </div>
 
-        <!-- HK Temperature 70%+ Controls (Highlighted) -->
+        <!-- HK Temperature Controls (Highlighted) -->
         <div class="field-group field-group-hk">
           <label for="hk-pricemin-input">🌡️ [香港氣溫] 觸發勝率門檻</label>
           <div class="input-with-unit">
             <input type="number" id="hk-pricemin-input" min="10" max="99" step="1" value="70" required />
             <span class="unit">%</span>
           </div>
-          <small>預設 70%（達 70% 立即買入，無上限）</small>
+          <small id="desc-hk-pricemin">溫度區間達 70% 立即買入（無上限）</small>
         </div>
 
         <div class="field-group field-group-hk">
@@ -288,7 +288,7 @@
             <input type="number" id="hk-stake-input" min="1" max="1000" step="1" value="10" required />
             <span class="unit">USDC</span>
           </div>
-          <small>每日第一個達標溫度選項注額</small>
+          <small id="desc-hk-stake">每日首個達標溫度選項買入 $10 USDC</small>
         </div>
 
         <div class="field-group field-group-hk">
@@ -297,7 +297,7 @@
             <input type="number" id="hk-gatehour-input" min="0" max="23" step="1" value="11" required />
             <span class="unit">:00</span>
           </div>
-          <small>香港時間 11:00 後開始自動監測</small>
+          <small id="desc-hk-gatehour">香港時間 11:00 後開始自動監測</small>
         </div>
 
         <div class="field-group">
@@ -312,9 +312,14 @@
               <span class="unit">倉</span>
             </div>
           </div>
-          <small>24/7 常駐輪詢頻率與最大持倉</small>
+          <small id="desc-scan-positions">每 5 秒掃描一次 · 最多同時持有 15 倉</small>
         </div>
       </form>
+
+      <!-- Live Dynamic Strategy Summary Strip -->
+      <div id="strategy-live-summary" class="strategy-summary-bar">
+        📋 <strong>目前策略描述：</strong>【運動賽事】當選項勝率介於 <strong>70% ~ 95%</strong>（流動性 &gt;= $1,500、點差 &lt;= 5.0%）時，以最接近結束賽事優先自動買入 <strong>$25 USDC</strong>（單日上限 $300，升至 96% 自動停利 / 跌破 52% 自動停損）；【香港氣溫】於香港時間 <strong>11:00</strong> 後，當任一溫度區間達 <strong>70%+</strong> 即自動買入 <strong>$10 USDC</strong>。
+      </div>
     </section>
 
     <!-- 3. Unified Main Two-Column Workspace -->
@@ -339,7 +344,7 @@
             </div>
 
             <div class="subnav-pills" role="tablist">
-              <button type="button" class="subnav-btn active" data-hktab="overview">
+              <button type="button" class="subnav-btn active" id="hk-subnav-overview-btn" data-hktab="overview">
                 📊 今日溫度區間 (70%+ 監測)
               </button>
               <button type="button" class="subnav-btn" data-hktab="records">
@@ -403,7 +408,7 @@
           <div class="panel-header">
             <div class="panel-title-group">
               <div class="brand-title-row">
-                <h2 class="panel-title">🏟️ Polymarket 全球運動賽事 70%+ 即時勝率監測表</h2>
+                <h2 class="panel-title" id="sports-monitor-title">🏟️ Polymarket 全球運動賽事 70%+ 即時勝率監測表</h2>
                 <span class="badge badge-accent">⏱️ 最快結束優先排序 &amp; 優先投注</span>
                 <span class="badge badge-success">🔒 同項目僅投注一次</span>
               </div>
@@ -413,7 +418,7 @@
             <div class="filter-controls">
               <label class="checkbox-pill">
                 <input type="checkbox" id="filter-only-70" />
-                <span>🔥 僅看 &gt;= 70% 選項</span>
+                <span id="filter-only-70-label">🔥 僅看 &gt;= 70% 選項</span>
               </label>
               <input type="search" id="market-search-input" class="input-search" placeholder="搜尋球隊、聯賽或賽事名稱..." />
             </div>

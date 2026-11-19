@@ -1445,4 +1445,19 @@ html, body {
   gap: 8px;
 }
 
+.strategy-summary-bar {
+  padding: 11px 18px;
+  border-top: 1px solid var(--border-subtle);
+  background: rgba(16, 185, 129, 0.06);
+  color: #cbd5e1;
+  font-size: 12.5px;
+  line-height: 1.55;
+  font-variant-numeric: tabular-nums;
+}
+
+.strategy-summary-bar strong {
+  color: #6ee7b7;
+}
+
+
 
