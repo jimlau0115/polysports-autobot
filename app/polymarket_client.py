@@ -73,7 +73,7 @@ def classify_sport(text: str, tags: Optional[List[str]] = None) -> str:
 
 def is_sports_related(text: str, tags: Optional[List[str]] = None) -> bool:
     combined = f"{text} {' '.join(tags or [])}".lower()
-    if any(t in combined for t in ["sport", "sports", "game", "match", "vs.", "vs ", "championship", "league", "tournament"]):
+    if any(t in combined for t in ["sport", "sports", "vs.", "vs ", "premier league", "nba", "nfl", "mlb", "nhl", "ufc", "atp", "wta"]):
         return True
     return classify_sport(text, tags) != "OTHER_SPORTS"
 
@@ -475,6 +475,7 @@ class PolymarketClient:
         spread_val = float(m.get("spread") or 0.015)
         best_bid_val = m.get("bestBid")
         best_ask_val = m.get("bestAsk")
+        group_item_title = str(m.get("groupItemTitle") or "").strip()
 
         outcomes_list = []
         for idx, label in enumerate(outcomes_raw):
@@ -485,6 +486,11 @@ class PolymarketClient:
             if prob <= 0.0 or prob >= 1.0:
                 continue
 
+            raw_label = str(label).strip()
+            display_label = raw_label
+            if raw_label.lower() == "yes" and group_item_title and group_item_title.lower() not in ("yes", "no"):
+                display_label = f"Yes ({group_item_title})"
+
             token_id = str(tokens_raw[idx]) if idx < len(tokens_raw) else ""
             half_sp = spread_val / 2.0
             b_bid = float(best_bid_val) if (idx == 0 and best_bid_val is not None) else max(0.01, prob - half_sp)
@@ -493,7 +499,8 @@ class PolymarketClient:
             outcomes_list.append(
                 {
                     "index": idx,
-                    "label": str(label),
+                    "label": display_label,
+                    "raw_label": raw_label,
                     "prob": round(prob, 4),
                     "best_bid": round(b_bid, 4),
                     "best_ask": round(b_ask, 4),
@@ -504,7 +511,10 @@ class PolymarketClient:
         if not outcomes_list:
             return None
 
-        top_outcome = max(outcomes_list, key=lambda x: x["prob"])
+        # Exclude negative "No" outcomes from being selected as the primary win target
+        positive_outcomes = [o for o in outcomes_list if o.get("raw_label", "").lower() != "no"]
+        candidate_outcomes = positive_outcomes if positive_outcomes else outcomes_list
+        top_outcome = max(candidate_outcomes, key=lambda x: x["prob"])
         sport_code = classify_sport(f"{event_title} {question}", tag_strings)
         meta = SPORT_META.get(sport_code, SPORT_META["OTHER_SPORTS"])
 

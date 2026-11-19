@@ -513,7 +513,7 @@ class TradingEngine:
             "config": cfg,
             "clob_status": clob_status,
             "portfolio": portfolio,
-            "markets": self.latest_markets,
+            "markets": self.latest_markets[:150],
             "open_positions": open_positions,
             "closed_positions": closed_positions,
             "logs": logs,
