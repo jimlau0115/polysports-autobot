@@ -1,6 +1,8 @@
 (() => {
   let appState = null;
   let activeHkTab = "overview"; // "overview" or "records"
+  let activeLedgerMode = "PAPER"; // "PAPER" (Trial Run) or "LIVE" (Password-Protected)
+  let adminToken = localStorage.getItem("poly_admin_token") || "";
   let selectedSport = "ALL";
   let onlyAbove70 = false;
   let searchQuery = "";
@@ -106,14 +108,38 @@
     }, 4200);
   }
 
+  function getAuthHeaders() {
+    const headers = { "Content-Type": "application/json" };
+    if (adminToken) {
+      headers["X-Admin-Token"] = adminToken;
+    }
+    return headers;
+  }
+
+  function openAuthModal() {
+    const isAdmin = Boolean(appState?.auth?.is_admin);
+    if (isAdmin) {
+      $("auth-login-form")?.classList.add("hidden");
+      $("auth-manage-section")?.classList.remove("hidden");
+    } else {
+      $("auth-login-form")?.classList.remove("hidden");
+      $("auth-manage-section")?.classList.add("hidden");
+      setTimeout(() => $("auth-password-input")?.focus(), 50);
+    }
+    $("auth-modal")?.showModal();
+  }
+
   async function apiPost(url, payload = {}) {
     const resp = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getAuthHeaders(),
       body: JSON.stringify(payload),
     });
     const data = await resp.json();
     if (!resp.ok || data.ok === false) {
+      if (data.auth_required || resp.status === 401) {
+        openAuthModal();
+      }
       throw new Error(data.error || data.message || `Request failed (${resp.status})`);
     }
     return data;
@@ -122,11 +148,33 @@
   function renderState(state) {
     if (!state) return;
     appState = state;
-    const { engine, config, portfolio, clob_status, hk_temp } = state;
-    const hkSum = hk_temp?.summary || {};
+    const { engine, config, clob_status, hk_temp } = state;
+    const isAdmin = Boolean(state.auth?.is_admin);
+
+    // If user is not authenticated as admin, force activeLedgerMode to PAPER
+    if (!isAdmin) {
+      activeLedgerMode = "PAPER";
+    }
+
+    const isLiveView = isAdmin && activeLedgerMode === "LIVE" && Boolean(state.live_data);
+    const activeData = isLiveView
+      ? state.live_data
+      : state.paper_data || {
+          portfolio: state.portfolio,
+          open_positions: state.open_positions,
+          closed_positions: state.closed_positions,
+          logs: state.logs,
+        };
+    const portfolio = activeData.portfolio || state.portfolio || {};
+    const hkSum = isLiveView
+      ? hk_temp?.summaryByMode?.LIVE || {}
+      : hk_temp?.summaryByMode?.PAPER || hk_temp?.summary || {};
+    const hkTrades = isLiveView
+      ? hk_temp?.tradesByMode?.LIVE || []
+      : hk_temp?.tradesByMode?.PAPER || hk_temp?.trades || [];
     const hkEng = hk_temp?.engine || {};
 
-    // 1. Topbar controls
+    // 1. Topbar controls & Auth Status
     const wsDot = $("ws-dot");
     if (wsDot) wsDot.classList.remove("offline");
     const statusText = $("scanner-status-text");
@@ -139,15 +187,60 @@
       dsSelect.value = config.data_source_mode || "AUTO";
     }
 
-    // Trading Mode Buttons
+    // Auth button & Lock icon
+    const authBtn = $("open-auth-modal-btn");
+    const lockIcon = $("mode-live-lock-icon");
+    if (isAdmin) {
+      if (authBtn) {
+        authBtn.textContent = "🔓 實盤已解鎖";
+        authBtn.className = "btn btn-secondary";
+      }
+      if (lockIcon) lockIcon.textContent = "⚡";
+    } else {
+      if (authBtn) {
+        authBtn.textContent = "🔒 實盤登入";
+        authBtn.className = "btn btn-outline";
+      }
+      if (lockIcon) lockIcon.textContent = "🔒";
+    }
+
+    // Ledger / Trading Mode Buttons & Banner
     const paperBtn = $("mode-paper-btn");
     const liveBtn = $("mode-live-btn");
-    if (config.trading_mode === "LIVE") {
+    const bannerEl = $("active-ledger-banner");
+    const bannerPill = $("ledger-mode-pill");
+    const bannerDesc = $("ledger-mode-desc");
+    const botExecBadge = $("bot-exec-mode-badge");
+
+    if (isLiveView) {
       paperBtn.className = "seg-btn";
       liveBtn.className = "seg-btn active active-live";
+      if (bannerEl) bannerEl.className = "ledger-banner ledger-banner-live";
+      if (bannerPill) {
+        bannerPill.textContent = "⚡ 實盤專區 (LIVE 密碼保護 · 獨立帳本)";
+        bannerPill.className = "badge badge-danger";
+      }
+      if (bannerDesc) {
+        bannerDesc.textContent = clob_status?.ready_for_live
+          ? "目前顯示「實盤 (LIVE)」獨立持倉、勝率、損益與日誌（與模擬盤 Trial Run 數據 100% 隔離）。"
+          : "目前顯示「實盤 (LIVE)」獨立帳本（勝率、持倉與模擬盤完全隔離）。如需開啟實盤自動下單，請點擊右上角「🔐 CLOB 錢包設定」綁定私鑰。";
+      }
     } else {
       paperBtn.className = "seg-btn active";
       liveBtn.className = "seg-btn";
+      if (bannerEl) bannerEl.className = "ledger-banner ledger-banner-paper";
+      if (bannerPill) {
+        bannerPill.textContent = "🧪 模擬盤 (Trial Run 策略制定與測試區)";
+        bannerPill.className = "badge badge-accent";
+      }
+      if (bannerDesc) {
+        bannerDesc.textContent = "目前顯示「模擬盤 (PAPER)」獨立數據，供策略制定與 Trial Run 測試；實盤需密碼登入且勝率/注項完全分開。";
+      }
+    }
+
+    if (botExecBadge) {
+      const execMode = config.trading_mode === "LIVE" ? "⚡ 實盤 CLOB (LIVE)" : "🧪 模擬盤 (PAPER)";
+      botExecBadge.textContent = `🤖 機器人自動下單目標：${execMode}`;
     }
 
     // Sports Bot Toggle Button
@@ -164,25 +257,45 @@
       }
     }
 
-    // 2. Unified 6-Card KPI Strip (Combining Sports + HK Temp metrics)
+    // 2. Unified 6-Card KPI Strip (Isolated by PAPER vs LIVE Ledger!)
     const hkExposure = Number(hkSum.exposureUsdc || 0);
     const hkUnrealized = Number(hkSum.unrealizedPnl || 0);
     const hkRealized = Number(hkSum.realizedPnl || 0);
     const combinedOpenVal = Number(portfolio.open_market_value_usdc || 0) + hkExposure + hkUnrealized;
-    const combinedEquity = Number(portfolio.paper_cash_balance || 0) + combinedOpenVal;
+    const combinedInvested = Number(portfolio.open_invested_usdc || 0) + hkExposure;
     const combinedUnrealized = Number(portfolio.unrealized_pnl_usdc || 0) + hkUnrealized;
     const combinedRealized = Number(portfolio.realized_pnl_usdc || 0) + hkRealized;
     const combinedTotalPnl = combinedUnrealized + combinedRealized;
-    const initialBal = Number(portfolio.paper_initial_balance || 1000);
-    const combinedRoiPct = initialBal > 0 ? (combinedTotalPnl / initialBal) * 100 : 0;
 
-    $("kpi-equity").textContent = fmtUsd(combinedEquity);
-    $("kpi-cash").textContent = fmtUsd(portfolio.paper_cash_balance);
-    $("kpi-open-value").textContent = fmtUsd(combinedOpenVal);
+    if (isLiveView) {
+      if ($("kpi-equity-label")) $("kpi-equity-label").textContent = "⚡ 實盤持倉總市值 (Live 獨立帳本)";
+      if ($("reset-paper-btn")) $("reset-paper-btn").classList.add("hidden");
+      $("kpi-equity").textContent = fmtUsd(combinedOpenVal);
+      if ($("kpi-equity-sub")) {
+        $("kpi-equity-sub").innerHTML = `實盤進行中本金 <strong id="kpi-cash">${fmtUsd(combinedInvested)}</strong> · 實盤市值 <strong id="kpi-open-value">${fmtUsd(combinedOpenVal)}</strong>`;
+      }
+      if ($("kpi-pnl-label")) $("kpi-pnl-label").textContent = "📈 實盤累計總損益 (Live PnL)";
+      if ($("kpi-winrate-label")) $("kpi-winrate-label").textContent = "📌 實盤持倉 & 實盤勝率 (獨立)";
+    } else {
+      const combinedEquity = Number(portfolio.paper_cash_balance || 0) + combinedOpenVal;
+      if ($("kpi-equity-label")) $("kpi-equity-label").textContent = "🧪 模擬盤總淨值 (Trial Run)";
+      if ($("reset-paper-btn")) $("reset-paper-btn").classList.remove("hidden");
+      $("kpi-equity").textContent = fmtUsd(combinedEquity);
+      if ($("kpi-equity-sub")) {
+        $("kpi-equity-sub").innerHTML = `模擬可用現金 <strong id="kpi-cash">${fmtUsd(portfolio.paper_cash_balance)}</strong> · 持倉市值 <strong id="kpi-open-value">${fmtUsd(combinedOpenVal)}</strong>`;
+      }
+      if ($("kpi-pnl-label")) $("kpi-pnl-label").textContent = "📈 模擬盤累計損益 (Paper PnL)";
+      if ($("kpi-winrate-label")) $("kpi-winrate-label").textContent = "📌 模擬盤持倉 & 模擬勝率";
+    }
 
     const totalPnlEl = $("kpi-total-pnl");
     totalPnlEl.textContent = fmtUsd(combinedTotalPnl, true);
     totalPnlEl.className = `kpi-value ${combinedTotalPnl >= 0 ? "pnl-pos" : "pnl-neg"}`;
+
+    const roiBase = isLiveView
+      ? Math.max(1, combinedInvested || Number(config.daily_budget_usdc || 300))
+      : Number(portfolio.paper_initial_balance || 1000);
+    const combinedRoiPct = roiBase > 0 ? (combinedTotalPnl / roiBase) * 100 : 0;
 
     const roiBadge = $("kpi-roi-badge");
     const roiSign = combinedRoiPct >= 0 ? "+" : "";
@@ -195,21 +308,22 @@
     const sportsOpenCount = Number(portfolio.open_positions_count || 0);
     const hkOpenCount = Number(hkSum.openCount || 0);
     const totalOpenCount = sportsOpenCount + hkOpenCount;
-    const combinedInvested = Number(portfolio.open_invested_usdc || 0) + hkExposure;
 
     $("kpi-positions-count").textContent = `${totalOpenCount} 筆進行中`;
     if ($("kpi-sports-open-count")) $("kpi-sports-open-count").textContent = String(sportsOpenCount);
     if ($("hk-open-count")) $("hk-open-count").textContent = String(hkOpenCount);
     $("kpi-invested").textContent = fmtUsd(combinedInvested);
     $("kpi-winrate-tag").textContent =
-      portfolio.closed_positions_count > 0 ? `勝率 ${portfolio.win_rate_pct}%` : `已結算 ${portfolio.wins}勝${portfolio.losses}敗`;
+      portfolio.closed_positions_count > 0
+        ? `勝率 ${portfolio.win_rate_pct}% (${portfolio.wins}勝${portfolio.losses}敗)`
+        : `已結算 ${portfolio.wins || 0}勝${portfolio.losses || 0}敗`;
 
     const budgetPct =
       portfolio.daily_budget_usdc > 0
         ? Math.min(100, Math.round((portfolio.today_spend_usdc / portfolio.daily_budget_usdc) * 100))
         : 0;
     if ($("kpi-daily-spend")) {
-      $("kpi-daily-spend").textContent = `${fmtUsd(portfolio.today_spend_usdc)} / $${portfolio.daily_budget_usdc.toFixed(0)}`;
+      $("kpi-daily-spend").textContent = `${fmtUsd(portfolio.today_spend_usdc)} / $${Number(portfolio.daily_budget_usdc || 300).toFixed(0)}`;
     }
     if ($("kpi-budget-bar")) {
       $("kpi-budget-bar").style.width = `${budgetPct}%`;
@@ -228,6 +342,19 @@
 
     $("kpi-markets-summary").textContent = `${engine.above_threshold_count} / ${engine.total_sports_markets} 場 >= ${Math.round(config.min_win_prob * 100)}%`;
     $("last-scan-timestamp").textContent = `最後更新：${fmtTime(engine.last_scan_at)}`;
+
+    // Right sidebar ledger indicators
+    const posLedgerBadge = $("positions-ledger-badge");
+    if (posLedgerBadge) {
+      posLedgerBadge.textContent = isLiveView ? "⚡ 實盤獨立帳本" : "🧪 模擬盤帳本";
+      posLedgerBadge.className = `badge ${isLiveView ? "badge-danger" : "badge-accent"}`;
+    }
+    const logsTitle = $("logs-panel-title");
+    if (logsTitle) {
+      logsTitle.textContent = isLiveView
+        ? "⚡ 24/7 雙引擎自動交易日誌 (實盤 LIVE 帳本)"
+        : "🧪 24/7 雙引擎自動交易日誌 (模擬盤 PAPER 帳本)";
+    }
 
     // 3. Unified Strategy Form (Sports 70%+ & HK Temp 70%+)
     if (!formDirty) {
@@ -262,13 +389,13 @@
       $("clob-sig-type").value = String(clob_status.signature_type ?? 1);
     }
 
-    // 5. Render HK Temperature Monitor, Sports Markets Table, Positions, and Logs
+    // 5. Render HK Temperature Monitor, Sports Markets Table, Positions, and Logs (Scoped to activeLedgerMode)
     if (hk_temp) {
       renderHkTempModule(hk_temp);
     }
     renderMarketsTable(state.markets || [], config);
-    renderPositions(state.open_positions || [], state.closed_positions || [], hk_temp?.trades || []);
-    renderLogs(state.logs || []);
+    renderPositions(activeData.open_positions || [], activeData.closed_positions || [], hkTrades);
+    renderLogs(activeData.logs || []);
   }
 
   function renderHkTempModule(hk) {
@@ -475,7 +602,11 @@
 
     tbody.innerHTML = filtered
       .map((m) => {
-        const ev = m.rule_evaluation || {};
+        const isLiveView = Boolean(appState?.auth?.is_admin) && activeLedgerMode === "LIVE";
+        const ev =
+          (isLiveView ? m.live_rule_evaluation : m.paper_rule_evaluation) ||
+          m.rule_evaluation ||
+          {};
         const rowClass = ev.status_code === "QUALIFIED" ? "row-qualified" : "";
 
         const outcomesHtml = (m.outcomes || [])
@@ -691,7 +822,13 @@
 
   function connectWebSocket() {
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    ws = new WebSocket(`${proto}//${window.location.host}/ws`);
+    const qs = adminToken ? `?token=${encodeURIComponent(adminToken)}` : "";
+    ws = new WebSocket(`${proto}//${window.location.host}/ws${qs}`);
+    ws.onopen = () => {
+      if (adminToken && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "AUTH", token: adminToken }));
+      }
+    };
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
@@ -787,7 +924,7 @@
       }
     });
 
-    // HK Temp Manual Bet Button Delegation
+    // HK Temp Manual Bet Button Delegation (Scoped to activeLedgerMode)
     $("hk-outcomes-container")?.addEventListener("click", async (e) => {
       const btn = e.target.closest(".hk-manual-bet-btn");
       if (!btn) return;
@@ -795,10 +932,11 @@
       try {
         const res = await apiPost("/api/hk-temp/bet", {
           outcome_name: btn.dataset.outcomeName,
+          mode: activeLedgerMode,
         });
         renderState(res.state);
         activatePosTab("hk");
-        showToast(`🌡️ 已投注香港最高氣溫選項「${btn.dataset.outcomeName}」！`);
+        showToast(`🌡️ 已於「${activeLedgerMode === "LIVE" ? "實盤" : "模擬盤"}」投注香港最高氣溫選項「${btn.dataset.outcomeName}」！`);
       } catch (err) {
         showToast(`❌ 下單失敗：${err.message}`);
       } finally {
@@ -856,26 +994,114 @@
       }
     });
 
+    // Switch to PAPER Ledger (Trial Run)
     $("mode-paper-btn")?.addEventListener("click", async () => {
+      activeLedgerMode = "PAPER";
+      if (appState) renderState(appState);
       try {
-        await apiPost("/api/config", { trading_mode: "PAPER" });
-        const res = await apiPost("/api/hk-temp/config", { mode: "PAPER" });
-        renderState(res.state);
-        showToast("🧪 運動與香港氣溫已同步切換為「模擬交易 (Paper)」模式");
+        if (appState?.auth?.is_admin && appState?.config?.trading_mode === "LIVE") {
+          await apiPost("/api/config", { trading_mode: "PAPER" });
+          const res = await apiPost("/api/hk-temp/config", { mode: "PAPER" });
+          renderState(res.state);
+        }
+        showToast("🧪 已切換至「模擬盤 (Trial Run)」獨立帳本與策略測試模式");
       } catch (err) {
         showToast(`❌ ${err.message}`);
       }
     });
 
+    // Switch to LIVE Ledger (Requires Admin Password Login)
     $("mode-live-btn")?.addEventListener("click", async () => {
+      if (!appState?.auth?.is_admin) {
+        showToast("🔒 實盤專區受密碼保護，請輸入管理員密碼解鎖實盤獨立帳本");
+        openAuthModal();
+        return;
+      }
+
+      activeLedgerMode = "LIVE";
+      renderState(appState);
+
+      if (appState?.clob_status?.ready_for_live) {
+        try {
+          await apiPost("/api/config", { trading_mode: "LIVE" });
+          const res = await apiPost("/api/hk-temp/config", { mode: "LIVE" });
+          renderState(res.state);
+          showToast("⚡ 已進入「實盤專區 (LIVE)」並同步開啟 CLOB 實盤自動下單！");
+        } catch (err) {
+          showToast(`⚠️ ${err.message}`);
+        }
+      } else {
+        showToast("🔓 已切換至「實盤專區 (LIVE)」獨立帳本！如需自動下單，請於右上角設定 CLOB 錢包私鑰。");
+      }
+    });
+
+    // Admin Auth Modal Events (Login / Change Password / Logout)
+    $("open-auth-modal-btn")?.addEventListener("click", () => openAuthModal());
+    $("close-auth-modal-btn")?.addEventListener("click", () => $("auth-modal")?.close());
+
+    $("auth-login-form")?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const pw = $("auth-password-input")?.value || "";
       try {
-        await apiPost("/api/config", { trading_mode: "LIVE" });
-        const res = await apiPost("/api/hk-temp/config", { mode: "LIVE" });
+        const res = await apiPost("/api/auth/login", { password: pw });
+        adminToken = res.token || "";
+        localStorage.setItem("poly_admin_token", adminToken);
+        $("auth-password-input").value = "";
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "AUTH", token: adminToken }));
+        }
+        activeLedgerMode = "LIVE";
         renderState(res.state);
-        showToast("⚡ 運動與香港氣溫已同步切換為「Polymarket CLOB 實盤」模式");
+        $("auth-modal")?.close();
+
+        if (res.state?.clob_status?.ready_for_live) {
+          try {
+            await apiPost("/api/config", { trading_mode: "LIVE" });
+            const r2 = await apiPost("/api/hk-temp/config", { mode: "LIVE" });
+            renderState(r2.state);
+          } catch (_) {}
+        }
+        showToast("🔓 實盤管理員驗證成功！已切換至「⚡ 實盤專區」獨立帳本。");
       } catch (err) {
-        showToast(`⚠️ ${err.message}`);
-        $("clob-modal")?.showModal();
+        showToast(`${err.message}`);
+      }
+    });
+
+    $("auth-change-pw-form")?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      try {
+        const res = await apiPost("/api/auth/password", {
+          current_password: $("auth-curr-pw").value,
+          new_password: $("auth-new-pw").value,
+        });
+        adminToken = res.token || "";
+        localStorage.setItem("poly_admin_token", adminToken);
+        $("auth-curr-pw").value = "";
+        $("auth-new-pw").value = "";
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "AUTH", token: adminToken }));
+        }
+        renderState(res.state);
+        showToast("🔑 實盤管理員密碼已成功更新！");
+      } catch (err) {
+        showToast(`❌ 密碼修改失敗：${err.message}`);
+      }
+    });
+
+    $("auth-logout-btn")?.addEventListener("click", async () => {
+      try {
+        const res = await apiPost("/api/auth/logout");
+        adminToken = "";
+        localStorage.removeItem("poly_admin_token");
+        activeLedgerMode = "PAPER";
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "AUTH", token: "" }));
+        }
+        renderState(res.state);
+        $("auth-modal")?.close();
+        showToast("🔒 已登出並鎖定實盤專區，畫面已切回模擬盤 (Trial Run)");
+      } catch (err) {
+        showToast(`❌ ${err.message}`);
       }
     });
 
@@ -914,7 +1140,7 @@
       try {
         const res = await apiPost("/api/portfolio/reset", { initial_balance: 1000 });
         renderState(res.state);
-        showToast("🔄 模擬帳戶已重置為 $1,000.00 USDC");
+        showToast("🔄 模擬帳戶已重置為 $1,000.00 USDC（實盤數據不受影響）");
       } catch (err) {
         showToast(`❌ ${err.message}`);
       }
@@ -947,10 +1173,11 @@
         const res = await apiPost("/api/bet", {
           market_id: btn.dataset.marketId,
           outcome_index: Number(btn.dataset.outcomeIndex || 0),
+          trading_mode: activeLedgerMode,
         });
         renderState(res.state);
         activatePosTab("open");
-        showToast(`⚡ 已立即買入「${btn.dataset.outcomeLabel}」！`);
+        showToast(`⚡ 已於「${activeLedgerMode === "LIVE" ? "實盤" : "模擬盤"}」買入「${btn.dataset.outcomeLabel}」！`);
       } catch (err) {
         showToast(`❌ 下單失敗：${err.message}`);
       } finally {
@@ -980,7 +1207,14 @@
     $("tab-closed-pos-btn")?.addEventListener("click", () => activatePosTab("closed"));
 
     const clobModal = $("clob-modal");
-    $("open-clob-modal-btn")?.addEventListener("click", () => clobModal.showModal());
+    $("open-clob-modal-btn")?.addEventListener("click", () => {
+      if (!appState?.auth?.is_admin) {
+        showToast("🔒 設定 CLOB 實盤錢包憑證需先輸入實盤管理員密碼");
+        openAuthModal();
+        return;
+      }
+      clobModal.showModal();
+    });
     $("close-clob-modal-btn")?.addEventListener("click", () => clobModal.close());
 
     const deployModal = $("deploy-modal");
@@ -1019,9 +1253,12 @@
           });
           $("clob-private-key").value = "";
         }
-        const resp = await fetch("/api/clob/verify", { method: "POST" });
+        const resp = await fetch("/api/clob/verify", {
+          method: "POST",
+          headers: getAuthHeaders(),
+        });
         const data = await resp.json();
-        banner.textContent = (data.ok ? "✅ " : "⚠️ ") + data.message;
+        banner.textContent = (data.ok ? "✅ " : "⚠️ ") + (data.message || data.error || "");
       } catch (err) {
         banner.textContent = `❌ 驗證錯誤：${err.message}`;
       }
@@ -1033,7 +1270,7 @@
     setInterval(updateHktClock, 1000);
     bindEvents();
     try {
-      const resp = await fetch("/api/state");
+      const resp = await fetch("/api/state", { headers: getAuthHeaders() });
       if (resp.ok) {
         const state = await resp.json();
         renderState(state);

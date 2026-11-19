@@ -52,17 +52,20 @@
         </select>
       </div>
 
-      <!-- Unified Trading Mode Segmented Switch (Controls both Sports & HK Temp) -->
-      <div class="segmented-control" role="group" aria-label="交易執行模式">
-        <button type="button" id="mode-paper-btn" class="seg-btn active">
-          🧪 模擬盤 (Paper)
+      <!-- Unified Trading Mode & Ledger Segmented Switch (Separates PAPER Trial Run vs Password-Protected LIVE) -->
+      <div class="segmented-control" role="group" aria-label="模擬盤與實盤獨立帳本切換">
+        <button type="button" id="mode-paper-btn" class="seg-btn active" title="模擬盤：無需密碼，供策略制定與 Trial Run 測試，與實盤數據完全分開">
+          🧪 模擬盤 (Trial Run)
         </button>
-        <button type="button" id="mode-live-btn" class="seg-btn">
-          ⚡ 實盤 (Live CLOB)
+        <button type="button" id="mode-live-btn" class="seg-btn" title="實盤專區：需輸入管理員密碼解鎖，擁有獨立實盤持倉、勝率、損益與日誌">
+          <span id="mode-live-lock-icon">🔒</span> 實盤專區 (Live)
         </button>
       </div>
 
       <!-- Quick Action Buttons -->
+      <button type="button" id="open-auth-modal-btn" class="btn btn-outline" title="登入實盤管理員密碼、修改密碼或登出">
+        🔒 實盤登入
+      </button>
       <button type="button" id="manual-scan-btn" class="btn btn-ghost" title="立即重新掃描運動與香港氣溫盤口">
         🔄 掃描
       </button>
@@ -82,22 +85,33 @@
   <!-- UNIFIED ALL-IN-ONE DASHBOARD (SPORTS 70%+ & HK TEMP 70%+)           -->
   <!-- =================================================================== -->
   <main class="dashboard-container">
+    <!-- Active Ledger Indicator Banner -->
+    <div id="active-ledger-banner" class="ledger-banner ledger-banner-paper">
+      <div class="ledger-banner-left">
+        <span class="badge badge-accent" id="ledger-mode-pill">🧪 模擬盤 (Trial Run 策略測試區)</span>
+        <span id="ledger-mode-desc">目前顯示「模擬盤」獨立數據（供策略制定與 Trial Run 測試，與實盤的投注紀錄、勝率及損益完全分開）。</span>
+      </div>
+      <div class="ledger-banner-right">
+        <span class="badge badge-outline" id="bot-exec-mode-badge">🤖 自動下單目標：模擬盤 (PAPER)</span>
+      </div>
+    </div>
+
     <!-- 1. Unified 6-Card KPI Summary Strip -->
     <section class="kpi-grid kpi-grid-6" aria-label="全系統資金、運動雷達與香港天文臺即時指標">
       <article class="kpi-card">
         <div class="kpi-header">
-          <span class="kpi-label">💰 帳戶總淨值 (共用資金池)</span>
-          <button type="button" id="reset-paper-btn" class="btn-link" title="重置模擬帳戶資金與持倉">重置帳戶</button>
+          <span class="kpi-label" id="kpi-equity-label">🧪 模擬盤總淨值 (Trial Run)</span>
+          <button type="button" id="reset-paper-btn" class="btn-link" title="重置模擬帳戶資金與持倉">重置模擬盤</button>
         </div>
         <div class="kpi-value" id="kpi-equity">$1,000.00</div>
-        <div class="kpi-sub">
-          可用現金 <strong id="kpi-cash">$1,000.00</strong> · 總持倉市值 <strong id="kpi-open-value">$0.00</strong>
+        <div class="kpi-sub" id="kpi-equity-sub">
+          可用現金 <strong id="kpi-cash">$1,000.00</strong> · 持倉市值 <strong id="kpi-open-value">$0.00</strong>
         </div>
       </article>
 
       <article class="kpi-card">
         <div class="kpi-header">
-          <span class="kpi-label">📈 雙引擎累計總損益 (PnL)</span>
+          <span class="kpi-label" id="kpi-pnl-label">📈 模擬盤累計損益 (PnL)</span>
           <span class="badge" id="kpi-roi-badge">0.00%</span>
         </div>
         <div class="kpi-value" id="kpi-total-pnl">$0.00</div>
@@ -108,7 +122,7 @@
 
       <article class="kpi-card">
         <div class="kpi-header">
-          <span class="kpi-label">📌 綜合持倉 &amp; 歷史勝率</span>
+          <span class="kpi-label" id="kpi-winrate-label">📌 模擬盤持倉 &amp; 勝率</span>
           <span class="kpi-tag" id="kpi-winrate-tag">勝率 --%</span>
         </div>
         <div class="kpi-value" id="kpi-positions-count">0 筆進行中</div>
@@ -453,6 +467,7 @@
                 📜 已結算 (<span id="closed-pos-badge">0</span>)
               </button>
             </div>
+            <span class="badge badge-accent" id="positions-ledger-badge">🧪 模擬盤帳本</span>
           </div>
 
           <div id="open-positions-view" class="positions-list"></div>
@@ -463,7 +478,7 @@
         <section class="panel logs-panel">
           <div class="panel-header">
             <div class="panel-title-group">
-              <h2 class="panel-title">⚡ 24/7 雙引擎自動交易日誌 (運動 + 氣溫)</h2>
+              <h2 class="panel-title" id="logs-panel-title">⚡ 24/7 雙引擎自動交易日誌 (模擬盤)</h2>
             </div>
             <span class="badge badge-outline" id="log-count-badge">即時更新</span>
           </div>
@@ -472,6 +487,67 @@
       </aside>
     </div>
   </main>
+
+  <!-- Native Modal 0: Admin Password Authentication for Live Trading Ledger -->
+  <dialog id="auth-modal" class="modal-dialog" closedby="any">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div>
+          <h3>🔒 實盤專區 (LIVE) 密碼保護與安全管理</h3>
+          <p class="modal-subtitle">模擬盤 (Trial Run) 開放測試策略；實盤的持倉、勝率、損益、日誌與 CLOB 錢包均受密碼保護並與模擬盤完全隔離</p>
+        </div>
+        <button type="button" id="close-auth-modal-btn" class="btn-icon" aria-label="關閉視窗">✕</button>
+      </div>
+
+      <!-- View A: Login Form (Shown when NOT authenticated) -->
+      <form id="auth-login-form" class="modal-body">
+        <div class="alert-box alert-info" id="auth-modal-banner">
+          🔐 請輸入實盤管理員密碼以解鎖「⚡ 實盤專區」獨立帳本及 CLOB 錢包設定（預設密碼：<code>poly8888</code>，登入後可立即修改，亦可透過 Railway 環境變數 <code>ADMIN_PASSWORD</code> 設定）。
+        </div>
+
+        <div class="field-group">
+          <label for="auth-password-input">實盤管理員密碼 (Admin Password)</label>
+          <input type="password" id="auth-password-input" placeholder="請輸入管理員密碼..." autocomplete="current-password" required />
+        </div>
+
+        <div class="modal-footer">
+          <button type="submit" class="btn btn-primary">
+            🔓 解鎖並進入實盤專區
+          </button>
+        </div>
+      </form>
+
+      <!-- View B: Manage Password & Logout (Shown when authenticated as Admin) -->
+      <div id="auth-manage-section" class="modal-body hidden">
+        <div class="alert-box alert-info">
+          ✅ 您目前已通過實盤管理員驗證！您可以在上方自由切換「🧪 模擬盤 (Trial Run)」與「⚡ 實盤專區 (Live)」檢視各自的獨立帳本與勝率。
+        </div>
+
+        <form id="auth-change-pw-form" class="step-card">
+          <h4>🔑 修改實盤管理員密碼</h4>
+          <div class="field-row-2">
+            <div class="field-group">
+              <label for="auth-curr-pw">目前密碼</label>
+              <input type="password" id="auth-curr-pw" placeholder="輸入目前密碼" autocomplete="current-password" required />
+            </div>
+            <div class="field-group">
+              <label for="auth-new-pw">新密碼 (至少 4 碼)</label>
+              <input type="password" id="auth-new-pw" placeholder="輸入新密碼" minlength="4" autocomplete="new-password" required />
+            </div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;margin-top:6px;">
+            <button type="submit" class="btn btn-secondary">💾 更新實盤密碼</button>
+          </div>
+        </form>
+
+        <div class="modal-footer">
+          <button type="button" id="auth-logout-btn" class="btn btn-outline" style="border-color:rgba(244,63,94,0.45);color:#fda4af;">
+            🔒 登出並鎖定實盤專區
+          </button>
+        </div>
+      </div>
+    </div>
+  </dialog>
 
   <!-- Native Modal 1: Polymarket CLOB Wallet & API Credentials -->
   <dialog id="clob-modal" class="modal-dialog" closedby="any">

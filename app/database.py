@@ -1,4 +1,8 @@
+import hashlib
+import hmac
 import json
+import os
+import secrets
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -112,6 +116,19 @@ class Database:
                 conn.execute(
                     "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
                     ("clob_credentials", json.dumps(env_creds), utc_now_iso()),
+                )
+
+            # Initialize Admin Auth credentials for LIVE trading protection
+            cur_auth = conn.execute("SELECT value FROM settings WHERE key = 'admin_auth'")
+            if not cur_auth.fetchone():
+                default_pw = os.environ.get("ADMIN_PASSWORD", "poly8888").strip() or "poly8888"
+                auth_obj = {
+                    "password": default_pw,
+                    "token_secret": secrets.token_hex(32),
+                }
+                conn.execute(
+                    "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
+                    ("admin_auth", json.dumps(auth_obj), utc_now_iso()),
                 )
 
             # One-time deduplication of any duplicate positions on the same sports event/item
@@ -253,30 +270,103 @@ class Database:
             )
         return self.get_masked_clob_credentials()
 
+    def _get_admin_auth_obj(self) -> Dict[str, str]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT value FROM settings WHERE key = 'admin_auth'").fetchone()
+            if not row:
+                return {
+                    "password": os.environ.get("ADMIN_PASSWORD", "poly8888").strip() or "poly8888",
+                    "token_secret": "default-secret-polyquant",
+                }
+            return json.loads(row["value"])
+
+    def verify_admin_password(self, password: str) -> bool:
+        if not password:
+            return False
+        pw = str(password).strip()
+        env_pw = os.environ.get("ADMIN_PASSWORD", "").strip()
+        auth_obj = self._get_admin_auth_obj()
+        saved_pw = str(auth_obj.get("password", "poly8888")).strip()
+        if env_pw and hmac.compare_digest(pw, env_pw):
+            return True
+        return hmac.compare_digest(pw, saved_pw)
+
+    def update_admin_password(self, current_password: str, new_password: str) -> bool:
+        if not self.verify_admin_password(current_password):
+            return False
+        new_pw = str(new_password).strip()
+        if len(new_pw) < 4:
+            raise ValueError("新密碼長度至少需 4 個字元")
+        auth_obj = {
+            "password": new_pw,
+            "token_secret": secrets.token_hex(32),
+        }
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
+                ("admin_auth", json.dumps(auth_obj), utc_now_iso()),
+            )
+        return True
+
+    def create_admin_token(self) -> str:
+        auth_obj = self._get_admin_auth_obj()
+        secret = str(auth_obj.get("token_secret", "default-secret")).encode("utf-8")
+        return hmac.new(secret, b"polyquant-live-admin-session", hashlib.sha256).hexdigest()
+
+    def verify_admin_token(self, token: Optional[str]) -> bool:
+        if not token or not str(token).strip():
+            return False
+        expected = self.create_admin_token()
+        return hmac.compare_digest(str(token).strip(), expected)
+
     def has_bet_on_market(
         self,
         market_id: str,
         condition_id: str,
         market_slug: str = "",
         event_title: str = "",
+        trading_mode: Optional[str] = None,
     ) -> bool:
         target_ev_key = normalize_event_key(event_title, market_slug)
+        mode_filter = str(trading_mode).upper() if trading_mode else None
         with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT 1 FROM positions
-                WHERE market_id = ?
-                   OR (condition_id != '' AND condition_id = ?)
-                   OR (? != '' AND LOWER(TRIM(market_slug)) = LOWER(TRIM(?)))
-                   OR (? != '' AND LOWER(TRIM(event_title)) = LOWER(TRIM(?)))
-                LIMIT 1
-                """,
-                (market_id, condition_id, market_slug, market_slug, event_title, event_title),
-            ).fetchone()
+            if mode_filter:
+                row = conn.execute(
+                    """
+                    SELECT 1 FROM positions
+                    WHERE trading_mode = ?
+                      AND (
+                        market_id = ?
+                        OR (condition_id != '' AND condition_id = ?)
+                        OR (? != '' AND LOWER(TRIM(market_slug)) = LOWER(TRIM(?)))
+                        OR (? != '' AND LOWER(TRIM(event_title)) = LOWER(TRIM(?)))
+                      )
+                    LIMIT 1
+                    """,
+                    (mode_filter, market_id, condition_id, market_slug, market_slug, event_title, event_title),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    SELECT 1 FROM positions
+                    WHERE market_id = ?
+                       OR (condition_id != '' AND condition_id = ?)
+                       OR (? != '' AND LOWER(TRIM(market_slug)) = LOWER(TRIM(?)))
+                       OR (? != '' AND LOWER(TRIM(event_title)) = LOWER(TRIM(?)))
+                    LIMIT 1
+                    """,
+                    (market_id, condition_id, market_slug, market_slug, event_title, event_title),
+                ).fetchone()
             if row is not None:
                 return True
             if target_ev_key:
-                all_rows = conn.execute("SELECT event_title, market_slug FROM positions").fetchall()
+                if mode_filter:
+                    all_rows = conn.execute(
+                        "SELECT event_title, market_slug FROM positions WHERE trading_mode = ?",
+                        (mode_filter,),
+                    ).fetchall()
+                else:
+                    all_rows = conn.execute("SELECT event_title, market_slug FROM positions").fetchall()
                 for r in all_rows:
                     if normalize_event_key(r["event_title"], r["market_slug"]) == target_ev_key:
                         return True
@@ -342,12 +432,23 @@ class Database:
             row = conn.execute("SELECT * FROM positions WHERE id = ?", (pos_id,)).fetchone()
             return dict(row)
 
-    def get_positions(self, status: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+    def get_positions(
+        self,
+        status: Optional[str] = None,
+        limit: int = 100,
+        trading_mode: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         query = "SELECT * FROM positions"
+        clauses: List[str] = []
         params: List[Any] = []
         if status:
-            query += " WHERE status = ?"
+            clauses.append("status = ?")
             params.append(status)
+        if trading_mode:
+            clauses.append("trading_mode = ?")
+            params.append(str(trading_mode).upper())
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY id DESC LIMIT ?"
         params.append(limit)
         with self._connect() as conn:
@@ -449,16 +550,29 @@ class Database:
             row = conn.execute("SELECT * FROM trade_logs WHERE id = ?", (log_id,)).fetchone()
             return dict(row)
 
-    def get_logs(self, limit: int = 80) -> List[Dict[str, Any]]:
+    def get_logs(self, limit: int = 80, trading_mode: Optional[str] = None) -> List[Dict[str, Any]]:
         with self._connect() as conn:
-            rows = conn.execute("SELECT * FROM trade_logs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+            if trading_mode:
+                rows = conn.execute(
+                    "SELECT * FROM trade_logs WHERE trading_mode = ? ORDER BY id DESC LIMIT ?",
+                    (str(trading_mode).upper(), limit),
+                ).fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM trade_logs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
             return [dict(r) for r in rows]
 
-    def get_portfolio_summary(self) -> Dict[str, Any]:
+    def get_portfolio_summary(self, trading_mode: str = "PAPER") -> Dict[str, Any]:
+        mode_upper = str(trading_mode or "PAPER").upper()
         cfg = self.get_config()
         with self._connect() as conn:
-            open_rows = conn.execute("SELECT * FROM positions WHERE status = 'OPEN'").fetchall()
-            closed_rows = conn.execute("SELECT * FROM positions WHERE status != 'OPEN'").fetchall()
+            open_rows = conn.execute(
+                "SELECT * FROM positions WHERE status = 'OPEN' AND trading_mode = ?",
+                (mode_upper,),
+            ).fetchall()
+            closed_rows = conn.execute(
+                "SELECT * FROM positions WHERE status != 'OPEN' AND trading_mode = ?",
+                (mode_upper,),
+            ).fetchall()
 
         open_invested = sum(float(r["amount_usdc"]) for r in open_rows)
         open_unrealized = sum(float(r["unrealized_pnl_usdc"]) for r in open_rows)
@@ -470,13 +584,21 @@ class Database:
         closed_count = len(closed_rows)
         win_rate = round((wins / closed_count) * 100, 1) if closed_count > 0 else 0.0
 
-        paper_cash = round(float(cfg.get("paper_cash_balance", 1000.0)), 2)
-        paper_initial = round(float(cfg.get("paper_initial_balance", 1000.0)), 2)
-        paper_total_equity = round(paper_cash + open_market_value, 2)
         total_pnl = round(realized_pnl + open_unrealized, 2)
-        roi_pct = round((total_pnl / paper_initial) * 100, 2) if paper_initial > 0 else 0.0
+        if mode_upper == "LIVE":
+            total_invested_ever = open_invested + sum(float(r["amount_usdc"]) for r in closed_rows)
+            roi_pct = round((total_pnl / total_invested_ever) * 100, 2) if total_invested_ever > 0 else 0.0
+            paper_cash = 0.0
+            paper_initial = round(total_invested_ever, 2)
+            paper_total_equity = round(open_market_value + realized_pnl, 2)
+        else:
+            paper_cash = round(float(cfg.get("paper_cash_balance", 1000.0)), 2)
+            paper_initial = round(float(cfg.get("paper_initial_balance", 1000.0)), 2)
+            paper_total_equity = round(paper_cash + open_market_value, 2)
+            roi_pct = round((total_pnl / paper_initial) * 100, 2) if paper_initial > 0 else 0.0
 
         return {
+            "trading_mode": mode_upper,
             "paper_initial_balance": paper_initial,
             "paper_cash_balance": paper_cash,
             "open_positions_count": len(open_rows),
@@ -491,7 +613,7 @@ class Database:
             "win_rate_pct": win_rate,
             "wins": wins,
             "losses": losses,
-            "today_spend_usdc": round(self.get_today_spend_usdc(), 2),
+            "today_spend_usdc": round(self.get_today_spend_usdc(trading_mode=mode_upper), 2),
             "daily_budget_usdc": round(float(cfg.get("daily_budget_usdc", 300.0)), 2),
         }
 
@@ -500,6 +622,10 @@ class Database:
         with self._connect() as conn:
             conn.execute("DELETE FROM positions WHERE trading_mode = 'PAPER'")
             conn.execute("DELETE FROM trade_logs WHERE trading_mode = 'PAPER'")
+            try:
+                conn.execute("DELETE FROM hk_temp_trades WHERE LOWER(mode) = 'paper'")
+            except Exception:
+                pass
             row = conn.execute("SELECT value FROM settings WHERE key = 'bot_config'").fetchone()
             cfg = json.loads(row["value"]) if row else dict(DEFAULT_BOT_CONFIG)
             cfg["paper_initial_balance"] = float(initial_balance)

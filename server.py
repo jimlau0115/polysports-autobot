@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, Set
+from typing import Any, Dict, Optional, Set
 
 from aiohttp import WSMsgType, web
 
@@ -12,6 +12,7 @@ from app.polymarket_client import PolymarketClient
 from app.trading_engine import TradingEngine
 
 STATIC_DIR = BASE_DIR / "static"
+ADMIN_COOKIE_NAME = "poly_admin_token"
 
 
 class PolySportsServer:
@@ -20,23 +21,56 @@ class PolySportsServer:
         self.poly_client = PolymarketClient()
         self.engine = TradingEngine(self.db, self.poly_client)
         self.ws_clients: Set[web.WebSocketResponse] = set()
+        self.ws_tokens: Dict[web.WebSocketResponse, Optional[str]] = {}
         self.engine.set_broadcast_callback(self.broadcast_ws)
+
+    def _extract_token(self, request: web.Request) -> Optional[str]:
+        return (
+            request.headers.get("X-Admin-Token")
+            or request.cookies.get(ADMIN_COOKIE_NAME)
+            or request.query.get("token")
+        )
+
+    def _is_admin_request(self, request: web.Request) -> bool:
+        token = self._extract_token(request)
+        return self.db.verify_admin_token(token)
+
+    def _state_for_request(self, request: web.Request, raw_state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        st = raw_state if raw_state is not None else self.engine.get_full_state()
+        return self.engine.sanitize_state_for_client(st, is_admin=self._is_admin_request(request))
 
     async def broadcast_ws(self, payload: Dict[str, Any]) -> None:
         if not self.ws_clients:
             return
-        msg = json.dumps(payload, ensure_ascii=False)
+        raw_state = payload.get("data") if payload.get("type") == "STATE_UPDATE" else None
+        admin_msg = None
+        public_msg = None
+
         stale = []
         for ws in list(self.ws_clients):
             if ws.closed:
                 stale.append(ws)
                 continue
             try:
-                await ws.send_str(msg)
+                if raw_state is not None:
+                    is_admin = self.db.verify_admin_token(self.ws_tokens.get(ws))
+                    if is_admin:
+                        if admin_msg is None:
+                            admin_state = self.engine.sanitize_state_for_client(raw_state, is_admin=True)
+                            admin_msg = json.dumps({"type": "STATE_UPDATE", "data": admin_state}, ensure_ascii=False)
+                        await ws.send_str(admin_msg)
+                    else:
+                        if public_msg is None:
+                            pub_state = self.engine.sanitize_state_for_client(raw_state, is_admin=False)
+                            public_msg = json.dumps({"type": "STATE_UPDATE", "data": pub_state}, ensure_ascii=False)
+                        await ws.send_str(public_msg)
+                else:
+                    await ws.send_str(json.dumps(payload, ensure_ascii=False))
             except Exception:
                 stale.append(ws)
         for ws in stale:
             self.ws_clients.discard(ws)
+            self.ws_tokens.pop(ws, None)
 
     async def on_startup(self, app: web.Application) -> None:
         await self.engine.start()
@@ -46,8 +80,70 @@ class PolySportsServer:
         for ws in list(self.ws_clients):
             await ws.close()
         self.ws_clients.clear()
+        self.ws_tokens.clear()
 
-    # --- Handlers ---
+    # --- Auth Handlers (Protecting LIVE Trading & Credentials) ---
+    async def handle_auth_login(self, request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+            password = str(body.get("password", "")).strip()
+        except Exception:
+            return web.json_response({"ok": False, "error": "Invalid JSON"}, status=400)
+
+        if not self.db.verify_admin_password(password):
+            return web.json_response(
+                {"ok": False, "error": "❌ 實盤管理員密碼不正確，請重新輸入"},
+                status=401,
+            )
+
+        token = self.db.create_admin_token()
+        state = self.engine.sanitize_state_for_client(self.engine.get_full_state(), is_admin=True)
+        resp = web.json_response({"ok": True, "token": token, "state": state})
+        resp.set_cookie(
+            ADMIN_COOKIE_NAME,
+            token,
+            max_age=86400 * 30,
+            httponly=True,
+            samesite="Lax",
+            path="/",
+        )
+        return resp
+
+    async def handle_auth_logout(self, request: web.Request) -> web.Response:
+        state = self.engine.sanitize_state_for_client(self.engine.get_full_state(), is_admin=False)
+        resp = web.json_response({"ok": True, "state": state})
+        resp.del_cookie(ADMIN_COOKIE_NAME, path="/")
+        return resp
+
+    async def handle_auth_change_password(self, request: web.Request) -> web.Response:
+        if not self._is_admin_request(request):
+            return web.json_response(
+                {"ok": False, "auth_required": True, "error": "🔒 請先登入實盤管理員密碼"},
+                status=401,
+            )
+        try:
+            body = await request.json()
+            curr_pw = str(body.get("current_password", "")).strip()
+            new_pw = str(body.get("new_password", "")).strip()
+            ok = self.db.update_admin_password(curr_pw, new_pw)
+            if not ok:
+                return web.json_response({"ok": False, "error": "目前密碼不正確"}, status=400)
+            new_token = self.db.create_admin_token()
+            state = self.engine.sanitize_state_for_client(self.engine.get_full_state(), is_admin=True)
+            resp = web.json_response({"ok": True, "token": new_token, "state": state})
+            resp.set_cookie(
+                ADMIN_COOKIE_NAME,
+                new_token,
+                max_age=86400 * 30,
+                httponly=True,
+                samesite="Lax",
+                path="/",
+            )
+            return resp
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    # --- Core Handlers ---
     async def handle_index(self, request: web.Request) -> web.FileResponse:
         return web.FileResponse(STATIC_DIR / "index.html")
 
@@ -63,7 +159,7 @@ class PolySportsServer:
         )
 
     async def handle_get_state(self, request: web.Request) -> web.Response:
-        return web.json_response(self.engine.get_full_state())
+        return web.json_response(self._state_for_request(request))
 
     async def handle_update_config(self, request: web.Request) -> web.Response:
         try:
@@ -71,9 +167,20 @@ class PolySportsServer:
         except Exception:
             return web.json_response({"ok": False, "error": "Invalid JSON body"}, status=400)
 
+        is_admin = self._is_admin_request(request)
         old_cfg = self.db.get_config()
-        # Guard switching to LIVE mode if no private key configured
-        if body.get("trading_mode") == "LIVE":
+
+        # Require admin login before switching to LIVE mode or modifying config while in LIVE mode
+        if str(body.get("trading_mode", "")).upper() == "LIVE":
+            if not is_admin:
+                return web.json_response(
+                    {
+                        "ok": False,
+                        "auth_required": True,
+                        "error": "🔒 切換至「實盤 (LIVE)」需要管理員密碼，請先輸入密碼解鎖實盤專區。",
+                    },
+                    status=401,
+                )
             clob_status = self.db.get_masked_clob_credentials()
             if not clob_status.get("ready_for_live"):
                 return web.json_response(
@@ -112,19 +219,19 @@ class PolySportsServer:
                 ),
             )
 
-        state = await self.engine.run_single_scan()
-        return web.json_response({"ok": True, "config": updated, "state": state})
+        raw_state = await self.engine.run_single_scan()
+        return web.json_response({"ok": True, "config": updated, "state": self._state_for_request(request, raw_state)})
 
     async def handle_manual_scan(self, request: web.Request) -> web.Response:
-        state = await self.engine.run_single_scan()
-        return web.json_response({"ok": True, "state": state})
+        raw_state = await self.engine.run_single_scan()
+        return web.json_response({"ok": True, "state": self._state_for_request(request, raw_state)})
 
     async def handle_simulate_breakout(self, request: web.Request) -> web.Response:
         """Push a market above 70% in simulation feed and run immediate scan."""
         surge = self.poly_client.simulator.trigger_breakout_surge()
         self.db.add_log(
             level="INFO",
-            trading_mode=self.db.get_config().get("trading_mode", "PAPER"),
+            trading_mode="PAPER",
             event_title=surge["event_title"],
             outcome_label=surge["outcome_label"],
             prob=surge["new_prob"],
@@ -133,8 +240,10 @@ class PolySportsServer:
                 f"勝率瞬間拉升至 {surge['new_prob'] * 100:.1f}% (>= 70%)！"
             ),
         )
-        state = await self.engine.run_single_scan()
-        return web.json_response({"ok": True, "surge": surge, "state": state})
+        raw_state = await self.engine.run_single_scan()
+        return web.json_response(
+            {"ok": True, "surge": surge, "state": self._state_for_request(request, raw_state)}
+        )
 
     async def handle_manual_bet(self, request: web.Request) -> web.Response:
         try:
@@ -142,12 +251,21 @@ class PolySportsServer:
             market_id = str(body["market_id"])
             outcome_index = int(body.get("outcome_index", -1))
             amount_usdc = body.get("amount_usdc")
+            req_mode = str(body.get("trading_mode") or "PAPER").upper()
+            if req_mode == "LIVE" and not self._is_admin_request(request):
+                return web.json_response(
+                    {"ok": False, "auth_required": True, "error": "🔒 實盤下單需先登入實盤管理員密碼"},
+                    status=401,
+                )
             pos = await self.engine.execute_manual_bet(
                 market_id=market_id,
                 outcome_index=outcome_index,
                 amount_usdc=float(amount_usdc) if amount_usdc is not None else None,
+                trading_mode=req_mode if self._is_admin_request(request) else "PAPER",
             )
-            return web.json_response({"ok": True, "position": pos, "state": self.engine.get_full_state()})
+            return web.json_response(
+                {"ok": True, "position": pos, "state": self._state_for_request(request)}
+            )
         except Exception as exc:
             return web.json_response({"ok": False, "error": str(exc)}, status=400)
 
@@ -163,6 +281,12 @@ class PolySportsServer:
         target = next((p for p in open_positions if int(p["id"]) == pos_id), None)
         if not target:
             return web.json_response({"ok": False, "error": "找不到該持倉或已平倉"}, status=404)
+
+        if target.get("trading_mode") == "LIVE" and not self._is_admin_request(request):
+            return web.json_response(
+                {"ok": False, "auth_required": True, "error": "🔒 實盤持倉操作需先登入實盤管理員密碼"},
+                status=401,
+            )
 
         if action == "SETTLE_WIN":
             exit_prob = 1.0
@@ -196,9 +320,11 @@ class PolySportsServer:
                 ),
             )
 
-        state = self.engine.get_full_state()
-        await self.broadcast_ws({"type": "STATE_UPDATE", "data": state})
-        return web.json_response({"ok": True, "closed": closed, "state": state})
+        raw_state = self.engine.get_full_state()
+        await self.broadcast_ws({"type": "STATE_UPDATE", "data": raw_state})
+        return web.json_response(
+            {"ok": True, "closed": closed, "state": self._state_for_request(request, raw_state)}
+        )
 
     async def handle_reset_portfolio(self, request: web.Request) -> web.Response:
         try:
@@ -207,10 +333,15 @@ class PolySportsServer:
         except Exception:
             initial = 1000.0
         self.db.reset_paper_portfolio(initial_balance=initial)
-        state = await self.engine.run_single_scan()
-        return web.json_response({"ok": True, "state": state})
+        raw_state = await self.engine.run_single_scan()
+        return web.json_response({"ok": True, "state": self._state_for_request(request, raw_state)})
 
     async def handle_save_clob_credentials(self, request: web.Request) -> web.Response:
+        if not self._is_admin_request(request):
+            return web.json_response(
+                {"ok": False, "auth_required": True, "error": "🔒 設定 CLOB 私鑰需先登入實盤管理員密碼"},
+                status=401,
+            )
         try:
             body = await request.json()
         except Exception:
@@ -218,22 +349,30 @@ class PolySportsServer:
         masked = self.db.update_clob_credentials(body)
         self.db.add_log(
             level="INFO",
-            trading_mode=self.db.get_config().get("trading_mode", "PAPER"),
+            trading_mode="LIVE",
             message="🔐 Polymarket CLOB API 與 Polygon 錢包憑證已更新",
         )
-        state = self.engine.get_full_state()
-        await self.broadcast_ws({"type": "STATE_UPDATE", "data": state})
-        return web.json_response({"ok": True, "clob_status": masked, "state": state})
+        raw_state = self.engine.get_full_state()
+        await self.broadcast_ws({"type": "STATE_UPDATE", "data": raw_state})
+        return web.json_response(
+            {"ok": True, "clob_status": masked, "state": self._state_for_request(request, raw_state)}
+        )
 
     async def handle_verify_clob(self, request: web.Request) -> web.Response:
+        if not self._is_admin_request(request):
+            return web.json_response(
+                {"ok": False, "auth_required": True, "message": "🔒 驗證 CLOB 憑證需先登入實盤管理員密碼"},
+                status=401,
+            )
         creds = self.db.get_clob_credentials()
         result = await self.poly_client.verify_clob_credentials(creds)
         return web.json_response(result)
 
-    # --- Hong Kong Daily Temperature 75%+ Auto-Trading Handlers ---
+    # --- Hong Kong Daily Temperature 70%+ Auto-Trading Handlers ---
     async def handle_hk_temp_state(self, request: web.Request) -> web.Response:
-        data = await self.engine.hk_temp.scan_and_evaluate()
-        return web.json_response({"ok": True, "hk_temp": data})
+        await self.engine.hk_temp.scan_and_evaluate()
+        st = self._state_for_request(request)
+        return web.json_response({"ok": True, "hk_temp": st.get("hk_temp")})
 
     async def handle_hk_temp_config(self, request: web.Request) -> web.Response:
         try:
@@ -242,6 +381,15 @@ class PolySportsServer:
             return web.json_response({"ok": False, "error": "Invalid JSON"}, status=400)
 
         if str(body.get("mode", "")).upper() == "LIVE":
+            if not self._is_admin_request(request):
+                return web.json_response(
+                    {
+                        "ok": False,
+                        "auth_required": True,
+                        "error": "🔒 切換至「實盤 (LIVE)」需要管理員密碼，請先輸入密碼解鎖實盤專區。",
+                    },
+                    status=401,
+                )
             clob_status = self.db.get_masked_clob_credentials()
             if not clob_status.get("ready_for_live"):
                 return web.json_response(
@@ -254,42 +402,67 @@ class PolySportsServer:
 
         cfg = self.engine.hk_temp.update_config(body)
         await self.engine.hk_temp.scan_and_evaluate()
-        state = self.engine.get_full_state()
-        await self.broadcast_ws({"type": "STATE_UPDATE", "data": state})
-        return web.json_response({"ok": True, "config": cfg, "state": state})
+        raw_state = self.engine.get_full_state()
+        await self.broadcast_ws({"type": "STATE_UPDATE", "data": raw_state})
+        return web.json_response(
+            {"ok": True, "config": cfg, "state": self._state_for_request(request, raw_state)}
+        )
 
     async def handle_hk_temp_bet(self, request: web.Request) -> web.Response:
         try:
             body = await request.json()
             outcome_name = str(body["outcome_name"])
             stake = body.get("stake_usdc")
+            req_mode = str(body.get("mode") or "PAPER").upper()
+            if req_mode == "LIVE" and not self._is_admin_request(request):
+                return web.json_response(
+                    {"ok": False, "auth_required": True, "error": "🔒 實盤下單需先登入實盤管理員密碼"},
+                    status=401,
+                )
             trade = await self.engine.hk_temp.execute_manual_hk_bet(
                 outcome_name=outcome_name,
                 stake_usdc=float(stake) if stake is not None else None,
+                mode=req_mode if self._is_admin_request(request) else "PAPER",
             )
             await self.engine.hk_temp.scan_and_evaluate()
-            state = self.engine.get_full_state()
-            await self.broadcast_ws({"type": "STATE_UPDATE", "data": state})
-            return web.json_response({"ok": True, "trade": trade, "state": state})
+            raw_state = self.engine.get_full_state()
+            await self.broadcast_ws({"type": "STATE_UPDATE", "data": raw_state})
+            return web.json_response(
+                {"ok": True, "trade": trade, "state": self._state_for_request(request, raw_state)}
+            )
         except Exception as exc:
             return web.json_response({"ok": False, "error": str(exc)}, status=400)
 
     async def handle_ws(self, request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse(heartbeat=25.0)
         await ws.prepare(request)
+        token = self._extract_token(request)
         self.ws_clients.add(ws)
+        self.ws_tokens[ws] = token
         try:
-            await ws.send_str(
-                json.dumps({"type": "STATE_UPDATE", "data": self.engine.get_full_state()}, ensure_ascii=False)
-            )
+            is_admin = self.db.verify_admin_token(token)
+            init_state = self.engine.sanitize_state_for_client(self.engine.get_full_state(), is_admin=is_admin)
+            await ws.send_str(json.dumps({"type": "STATE_UPDATE", "data": init_state}, ensure_ascii=False))
             async for msg in ws:
                 if msg.type == WSMsgType.TEXT:
                     if msg.data == "ping":
                         await ws.send_str(json.dumps({"type": "PONG"}))
+                    else:
+                        try:
+                            parsed = json.loads(msg.data)
+                            if parsed.get("type") == "AUTH":
+                                new_tok = parsed.get("token")
+                                self.ws_tokens[ws] = new_tok
+                                adm = self.db.verify_admin_token(new_tok)
+                                st = self.engine.sanitize_state_for_client(self.engine.get_full_state(), is_admin=adm)
+                                await ws.send_str(json.dumps({"type": "STATE_UPDATE", "data": st}, ensure_ascii=False))
+                        except Exception:
+                            pass
                 elif msg.type == WSMsgType.ERROR:
                     break
         finally:
             self.ws_clients.discard(ws)
+            self.ws_tokens.pop(ws, None)
         return ws
 
 
@@ -301,6 +474,9 @@ def create_app() -> web.Application:
 
     app.router.add_get("/", srv.handle_index)
     app.router.add_get("/api/health", srv.handle_health)
+    app.router.add_post("/api/auth/login", srv.handle_auth_login)
+    app.router.add_post("/api/auth/logout", srv.handle_auth_logout)
+    app.router.add_post("/api/auth/password", srv.handle_auth_change_password)
     app.router.add_get("/api/state", srv.handle_get_state)
     app.router.add_post("/api/config", srv.handle_update_config)
     app.router.add_post("/api/scan", srv.handle_manual_scan)

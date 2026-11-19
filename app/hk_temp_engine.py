@@ -192,20 +192,52 @@ class HkTempEngine:
             )
         return cfg
 
-    def has_traded_market_date(self, market_date: str) -> bool:
+    def has_traded_market_date(self, market_date: str, mode: Optional[str] = None) -> bool:
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT 1 FROM hk_temp_trades WHERE market_date = ? LIMIT 1",
-                (market_date,),
-            ).fetchone()
+            if mode:
+                row = conn.execute(
+                    "SELECT 1 FROM hk_temp_trades WHERE market_date = ? AND LOWER(mode) = LOWER(?) LIMIT 1",
+                    (market_date, str(mode)),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT 1 FROM hk_temp_trades WHERE market_date = ? LIMIT 1",
+                    (market_date,),
+                ).fetchone()
             return row is not None
 
-    def get_trades(self, limit: int = 60) -> List[Dict[str, Any]]:
+    def get_trades(self, limit: int = 60, mode: Optional[str] = None) -> List[Dict[str, Any]]:
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM hk_temp_trades ORDER BY id DESC LIMIT ?", (limit,)
-            ).fetchall()
+            if mode:
+                rows = conn.execute(
+                    "SELECT * FROM hk_temp_trades WHERE LOWER(mode) = LOWER(?) ORDER BY id DESC LIMIT ?",
+                    (str(mode), limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM hk_temp_trades ORDER BY id DESC LIMIT ?", (limit,)
+                ).fetchall()
             return [dict(r) for r in rows]
+
+    def get_summary_for_mode(self, mode: str) -> Dict[str, Any]:
+        trades = self.get_trades(100, mode=mode)
+        open_trades = [t for t in trades if t["status"] in ("filled", "submitted")]
+        exposure_usdc = round(sum(float(t["stake_usdc"]) for t in open_trades), 2)
+        unrealized_pnl = round(sum(float(t["pnl_usdc"]) for t in open_trades), 2)
+        settled_trades = [t for t in trades if t["status"] in ("settled_win", "settled_loss")]
+        realized_pnl = round(sum(float(t["pnl_usdc"]) for t in settled_trades), 2)
+        wins = sum(1 for t in settled_trades if float(t["pnl_usdc"]) > 0)
+        losses = sum(1 for t in settled_trades if float(t["pnl_usdc"]) <= 0)
+        win_rate = round((wins / len(settled_trades)) * 100, 1) if settled_trades else None
+        return {
+            "openCount": len(open_trades),
+            "exposureUsdc": exposure_usdc,
+            "unrealizedPnl": unrealized_pnl,
+            "realizedPnl": realized_pnl,
+            "wins": wins,
+            "losses": losses,
+            "winRatePct": win_rate,
+        }
 
     def get_weather_records(self, limit: int = 40) -> List[Dict[str, Any]]:
         with self._connect() as conn:
@@ -248,8 +280,9 @@ class HkTempEngine:
         if market_info and market_info.get("outcomes"):
             self._update_trades_mark(market_date, market_info["outcomes"])
 
-        # 3. Evaluate Auto-Betting Rule (After 11:00 HKT, any 'Yes' outcome >= 70%, 1 bet per marketDate)
-        already_traded_today = self.has_traded_market_date(market_date)
+        # 3. Evaluate Auto-Betting Rule (After 11:00 HKT, any 'Yes' outcome >= 70%, 1 bet per marketDate per mode)
+        active_mode = str(cfg.get("mode", "PAPER")).upper()
+        already_traded_today = self.has_traded_market_date(market_date, mode=active_mode)
         qualified_outcomes = [
             o for o in (market_info.get("outcomes") if market_info else []) if o.get("inBand")
         ]
@@ -260,7 +293,9 @@ class HkTempEngine:
 
         if cfg.get("auto_enabled"):
             if already_traded_today:
-                trades_today = [t for t in self.get_trades(20) if t["market_date"] == market_date]
+                trades_today = [
+                    t for t in self.get_trades(20, mode=active_mode) if t["market_date"] == market_date
+                ]
                 first_t = trades_today[0] if trades_today else None
                 phase = "ordered"
                 phase_label = "本日已完成自動投注"
@@ -286,7 +321,7 @@ class HkTempEngine:
                     market_slug=market_info.get("slug", ""),
                     outcome=target,
                     stake_usdc=float(cfg.get("stake_usdc", 10.0)),
-                    mode=str(cfg.get("mode", "PAPER")),
+                    mode=active_mode,
                     trigger_type="AUTO_70_HKT",
                 )
                 if placed:
@@ -308,16 +343,10 @@ class HkTempEngine:
                     f"價格達到 {price_min * 100:.0f}% 或以上時立即以 {cfg['stake_usdc']:.0f} USDC 自動投注（無價格上限）。"
                 )
 
-        # Compute summary stats for HK Temp trades
-        all_trades = self.get_trades(100)
-        open_trades = [t for t in all_trades if t["status"] in ("filled", "submitted")]
-        exposure_usdc = round(sum(float(t["stake_usdc"]) for t in open_trades), 2)
-        unrealized_pnl = round(sum(float(t["pnl_usdc"]) for t in open_trades), 2)
-        settled_trades = [t for t in all_trades if t["status"] in ("settled_win", "settled_loss")]
-        realized_pnl = round(sum(float(t["pnl_usdc"]) for t in settled_trades), 2)
-        wins = sum(1 for t in settled_trades if float(t["pnl_usdc"]) > 0)
-        losses = sum(1 for t in settled_trades if float(t["pnl_usdc"]) <= 0)
-        win_rate = round((wins / len(settled_trades)) * 100, 1) if settled_trades else None
+        paper_summary = self.get_summary_for_mode("PAPER")
+        live_summary = self.get_summary_for_mode("LIVE")
+        paper_trades = self.get_trades(40, mode="PAPER")
+        live_trades = self.get_trades(40, mode="LIVE")
 
         state = {
             "nowHkt": dt_hkt.isoformat(),
@@ -345,16 +374,16 @@ class HkTempEngine:
                 "hasClobCredentials": self.db.get_masked_clob_credentials().get("ready_for_live", False),
                 "paperCash": self.db.get_config().get("paper_cash_balance", 1000.0),
             },
-            "summary": {
-                "openCount": len(open_trades),
-                "exposureUsdc": exposure_usdc,
-                "unrealizedPnl": unrealized_pnl,
-                "realizedPnl": realized_pnl,
-                "wins": wins,
-                "losses": losses,
-                "winRatePct": win_rate,
+            "summary": paper_summary,
+            "trades": paper_trades,
+            "summaryByMode": {
+                "PAPER": paper_summary,
+                "LIVE": live_summary,
             },
-            "trades": all_trades[:40],
+            "tradesByMode": {
+                "PAPER": paper_trades,
+                "LIVE": live_trades,
+            },
             "weatherRecords": self.get_weather_records(30),
         }
         self.last_dashboard_data = state
@@ -612,7 +641,10 @@ class HkTempEngine:
                 )
 
     async def execute_manual_hk_bet(
-        self, outcome_name: str, stake_usdc: Optional[float] = None
+        self,
+        outcome_name: str,
+        stake_usdc: Optional[float] = None,
+        mode: Optional[str] = None,
     ) -> Dict[str, Any]:
         if not self.last_dashboard_data or not self.last_dashboard_data.get("market"):
             await self.scan_and_evaluate()
@@ -625,13 +657,14 @@ class HkTempEngine:
         cfg = self.get_config()
         stake = float(stake_usdc or cfg.get("stake_usdc", 10.0))
         market_date = (self.last_dashboard_data or {}).get("marketDate") or now_hkt().strftime("%Y-%m-%d")
+        mode_to_use = str(mode or cfg.get("mode", "PAPER")).upper()
 
         placed = await self._execute_hk_temp_bet(
             market_date=market_date,
             market_slug=market.get("slug", ""),
             outcome=target,
             stake_usdc=stake,
-            mode=str(cfg.get("mode", "PAPER")),
+            mode=mode_to_use,
             trigger_type="MANUAL",
         )
         if not placed:

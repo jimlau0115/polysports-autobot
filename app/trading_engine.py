@@ -93,8 +93,12 @@ class TradingEngine:
             qualified_candidates = []
 
             for m in markets:
-                eval_info = self._evaluate_market(m, cfg)
+                paper_eval = self._evaluate_market(m, cfg, trading_mode="PAPER")
+                live_eval = self._evaluate_market(m, cfg, trading_mode="LIVE")
+                eval_info = live_eval if trading_mode == "LIVE" else paper_eval
                 m_copy = dict(m)
+                m_copy["paper_rule_evaluation"] = paper_eval
+                m_copy["live_rule_evaluation"] = live_eval
                 m_copy["rule_evaluation"] = eval_info
                 annotated_markets.append(m_copy)
                 if eval_info["eligible"]:
@@ -124,7 +128,13 @@ class TradingEngine:
                         new_bets.append(placed)
                         # Refresh config & evaluation badge after bet
                         cfg = self.db.get_config()
-                        m_cand["rule_evaluation"] = self._evaluate_market(m_cand, cfg)
+                        m_cand["paper_rule_evaluation"] = self._evaluate_market(m_cand, cfg, trading_mode="PAPER")
+                        m_cand["live_rule_evaluation"] = self._evaluate_market(m_cand, cfg, trading_mode="LIVE")
+                        m_cand["rule_evaluation"] = (
+                            m_cand["live_rule_evaluation"]
+                            if cfg.get("trading_mode", "PAPER") == "LIVE"
+                            else m_cand["paper_rule_evaluation"]
+                        )
 
             # 4. Also scan and evaluate Hong Kong Daily Temperature 75%+ Auto-Trading
             try:
@@ -146,7 +156,13 @@ class TradingEngine:
             await self._ws_broadcast_cb({"type": "STATE_UPDATE", "data": state})
         return state
 
-    def _evaluate_market(self, market: Dict[str, Any], cfg: Dict[str, Any]) -> Dict[str, Any]:
+    def _evaluate_market(
+        self,
+        market: Dict[str, Any],
+        cfg: Dict[str, Any],
+        trading_mode: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        mode_to_check = str(trading_mode or cfg.get("trading_mode", "PAPER")).upper()
         min_prob = float(cfg.get("min_win_prob", 0.70))
         max_prob = float(cfg.get("max_win_prob", 0.95))
         min_liq = float(cfg.get("min_liquidity_usdc", 1500.0))
@@ -167,12 +183,13 @@ class TradingEngine:
         spread = float(market.get("spread", 0.0))
         sport = market.get("sport", "OTHER_SPORTS")
 
-        # Check duplicate first (by market_id, condition_id, market_slug, and normalized event_title)
+        # Check duplicate first (scoped by trading_mode so PAPER trial runs don't block LIVE bets)
         already_bet = self.db.has_bet_on_market(
             market["market_id"],
             market.get("condition_id", ""),
             market.get("market_slug", ""),
             market.get("event_title", ""),
+            trading_mode=mode_to_check,
         )
         if prevent_dup and already_bet:
             return {
@@ -332,27 +349,28 @@ class TradingEngine:
         eval_info: Dict[str, Any],
         cfg: Dict[str, Any],
     ) -> Optional[Dict[str, Any]]:
-        # Double-check one-bet-per-event guard right before order execution
+        trading_mode = str(cfg.get("trading_mode", "PAPER")).upper()
+        # Double-check one-bet-per-event guard scoped to trading_mode right before order execution
         if self.db.has_bet_on_market(
             market["market_id"],
             market.get("condition_id", ""),
             market.get("market_slug", ""),
             market.get("event_title", ""),
+            trading_mode=trading_mode,
         ):
             return None
 
-        trading_mode = cfg.get("trading_mode", "PAPER")
         bet_amount = float(cfg.get("bet_amount_usdc", 25.0))
         daily_budget = float(cfg.get("daily_budget_usdc", 300.0))
         max_open = int(cfg.get("max_open_positions", 15))
 
-        # Check open positions cap
-        open_cnt = self.db.count_open_positions()
+        # Check open positions cap for this trading_mode
+        open_cnt = self.db.count_open_positions(trading_mode=trading_mode)
         if open_cnt >= max_open:
             return None
 
-        # Check daily budget cap
-        today_spend = self.db.get_today_spend_usdc()
+        # Check daily budget cap for this trading_mode
+        today_spend = self.db.get_today_spend_usdc(trading_mode=trading_mode)
         if today_spend + bet_amount > daily_budget:
             return None
 
@@ -367,10 +385,14 @@ class TradingEngine:
         )
 
     async def execute_manual_bet(
-        self, market_id: str, outcome_index: int = -1, amount_usdc: Optional[float] = None
+        self,
+        market_id: str,
+        outcome_index: int = -1,
+        amount_usdc: Optional[float] = None,
+        trading_mode: Optional[str] = None,
     ) -> Dict[str, Any]:
         cfg = self.db.get_config()
-        trading_mode = cfg.get("trading_mode", "PAPER")
+        mode_to_use = str(trading_mode or cfg.get("trading_mode", "PAPER")).upper()
         bet_amount = float(amount_usdc or cfg.get("bet_amount_usdc", 25.0))
 
         target_market = next((m for m in self.latest_markets if m["market_id"] == market_id), None)
@@ -382,8 +404,9 @@ class TradingEngine:
             target_market.get("condition_id", ""),
             target_market.get("market_slug", ""),
             target_market.get("event_title", ""),
+            trading_mode=mode_to_use,
         ):
-            raise ValueError("此運動項目已進行過投注（同一個項目只進行一次投注）")
+            raise ValueError(f"此運動項目在 {mode_to_use} 模式已進行過投注（同一個項目只進行一次投注）")
 
         if outcome_index >= 0 and outcome_index < len(target_market["outcomes"]):
             outcome = target_market["outcomes"][outcome_index]
@@ -394,15 +417,22 @@ class TradingEngine:
             market=target_market,
             outcome=outcome,
             amount_usdc=bet_amount,
-            trading_mode=trading_mode,
+            trading_mode=mode_to_use,
             trigger_type="MANUAL",
             trigger_reason=f"手動點擊立即投注 (勝率 {outcome['prob'] * 100:.1f}%)",
         )
         if not pos:
             raise RuntimeError("下單未完成，請檢查模擬餘額或 CLOB 憑證設定")
 
-        # Update evaluation badge
-        target_market["rule_evaluation"] = self._evaluate_market(target_market, self.db.get_config())
+        # Update evaluation badges
+        refreshed_cfg = self.db.get_config()
+        target_market["paper_rule_evaluation"] = self._evaluate_market(target_market, refreshed_cfg, trading_mode="PAPER")
+        target_market["live_rule_evaluation"] = self._evaluate_market(target_market, refreshed_cfg, trading_mode="LIVE")
+        target_market["rule_evaluation"] = (
+            target_market["live_rule_evaluation"]
+            if refreshed_cfg.get("trading_mode", "PAPER") == "LIVE"
+            else target_market["paper_rule_evaluation"]
+        )
         if self._ws_broadcast_cb:
             await self._ws_broadcast_cb({"type": "STATE_UPDATE", "data": self.get_full_state()})
         return pos
@@ -518,12 +548,21 @@ class TradingEngine:
 
     def get_full_state(self) -> Dict[str, Any]:
         cfg = self.db.get_config()
-        portfolio = self.db.get_portfolio_summary()
-        open_positions = self.db.get_positions(status="OPEN", limit=50)
-        closed_positions = [
-            p for p in self.db.get_positions(limit=60) if p["status"] != "OPEN"
+        paper_portfolio = self.db.get_portfolio_summary(trading_mode="PAPER")
+        live_portfolio = self.db.get_portfolio_summary(trading_mode="LIVE")
+
+        paper_open = self.db.get_positions(status="OPEN", limit=50, trading_mode="PAPER")
+        paper_closed = [
+            p for p in self.db.get_positions(limit=60, trading_mode="PAPER") if p["status"] != "OPEN"
         ][:30]
-        logs = self.db.get_logs(limit=60)
+        paper_logs = self.db.get_logs(limit=60, trading_mode="PAPER")
+
+        live_open = self.db.get_positions(status="OPEN", limit=50, trading_mode="LIVE")
+        live_closed = [
+            p for p in self.db.get_positions(limit=60, trading_mode="LIVE") if p["status"] != "OPEN"
+        ][:30]
+        live_logs = self.db.get_logs(limit=60, trading_mode="LIVE")
+
         clob_status = self.db.get_masked_clob_credentials()
 
         min_prob = float(cfg.get("min_win_prob", 0.70))
@@ -551,10 +590,73 @@ class TradingEngine:
             },
             "config": cfg,
             "clob_status": clob_status,
-            "portfolio": portfolio,
+            "portfolio": paper_portfolio,
             "markets": self.latest_markets[:150],
-            "open_positions": open_positions,
-            "closed_positions": closed_positions,
-            "logs": logs,
+            "open_positions": paper_open,
+            "closed_positions": paper_closed,
+            "logs": paper_logs,
+            "paper_data": {
+                "portfolio": paper_portfolio,
+                "open_positions": paper_open,
+                "closed_positions": paper_closed,
+                "logs": paper_logs,
+            },
+            "live_data": {
+                "portfolio": live_portfolio,
+                "open_positions": live_open,
+                "closed_positions": live_closed,
+                "logs": live_logs,
+            },
             "hk_temp": self.hk_temp.last_dashboard_data,
         }
+
+    def sanitize_state_for_client(self, state: Dict[str, Any], is_admin: bool) -> Dict[str, Any]:
+        out = dict(state)
+        out["auth"] = {"is_admin": bool(is_admin)}
+        if is_admin:
+            return out
+
+        # Unauthenticated public visitor: strictly strip ALL LIVE trading data & credentials
+        out["live_data"] = None
+        cfg_public = dict(state.get("config") or {})
+        cfg_public["trading_mode"] = "PAPER"
+        out["config"] = cfg_public
+
+        eng_public = dict(state.get("engine") or {})
+        eng_public["trading_mode"] = "PAPER"
+        out["engine"] = eng_public
+
+        out["clob_status"] = {
+            "has_private_key": False,
+            "private_key_masked": "",
+            "funder_address": "",
+            "has_api_key": False,
+            "api_key_masked": "",
+            "signature_type": 1,
+            "ready_for_live": bool((state.get("clob_status") or {}).get("ready_for_live")),
+        }
+
+        # Ensure markets only expose PAPER evaluation
+        sanitized_markets = []
+        for m in state.get("markets") or []:
+            mc = dict(m)
+            mc["rule_evaluation"] = mc.get("paper_rule_evaluation") or mc.get("rule_evaluation")
+            mc.pop("live_rule_evaluation", None)
+            sanitized_markets.append(mc)
+        out["markets"] = sanitized_markets
+
+        # Strip LIVE trades/summary from hk_temp
+        if state.get("hk_temp"):
+            hk_pub = dict(state["hk_temp"])
+            hk_eng = dict(hk_pub.get("engine") or {})
+            hk_eng["mode"] = "paper"
+            hk_pub["engine"] = hk_eng
+            paper_sum = (hk_pub.get("summaryByMode") or {}).get("PAPER") or hk_pub.get("summary") or {}
+            paper_tr = (hk_pub.get("tradesByMode") or {}).get("PAPER") or hk_pub.get("trades") or []
+            hk_pub["summary"] = paper_sum
+            hk_pub["trades"] = paper_tr
+            hk_pub["summaryByMode"] = {"PAPER": paper_sum}
+            hk_pub["tradesByMode"] = {"PAPER": paper_tr}
+            out["hk_temp"] = hk_pub
+
+        return out
