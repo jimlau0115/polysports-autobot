@@ -466,9 +466,19 @@ class PolySportsServer:
         return ws
 
 
+@web.middleware
+async def no_cache_middleware(request: web.Request, handler):
+    resp = await handler(request)
+    if isinstance(resp, web.StreamResponse):
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+    return resp
+
+
 def create_app() -> web.Application:
     srv = PolySportsServer()
-    app = web.Application()
+    app = web.Application(middlewares=[no_cache_middleware])
     app.on_startup.append(srv.on_startup)
     app.on_cleanup.append(srv.on_cleanup)
 
