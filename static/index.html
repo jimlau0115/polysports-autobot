@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark" />
   <title>PolyQuant 雙引擎量化終端 | Polymarket 運動賽事 &amp; 香港每日最高氣溫自動交易</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261120_v4" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261120_v5" />
 </head>
 <body>
   <!-- =================================================================== -->
@@ -252,21 +252,24 @@
             </div>
 
             <div class="field-group field-group-sl-highlight">
-              <label for="cfg-sl-prob">🛡️ 尾盤條件式自動停損 (結束前 N 分 + 勝率)</label>
-              <div class="input-sl-combo">
-                <input type="checkbox" id="cfg-sl-enabled" checked title="啟用自動停損" />
-                <div class="input-with-unit" title="僅當賽事距離結束剩餘分鐘數 <= 此值時才啟動停損 (設為 0 則不限時間)">
-                  <span class="unit-prefix">剩≤</span>
-                  <input type="number" id="cfg-sl-minutes" min="0" max="1440" step="1" value="20" required />
-                  <span class="unit">分</span>
-                </div>
-                <div class="input-with-unit" title="當勝率跌至此百分比或以下時觸發停損">
-                  <span class="unit-prefix">且≤</span>
-                  <input type="number" id="cfg-sl-prob" min="5" max="69" step="1" value="52" required />
-                  <span class="unit">%</span>
-                </div>
+              <label for="cfg-sl-minutes">⏱️ 停損前設：距離結束時間</label>
+              <div class="input-with-unit" title="僅當賽事距離結束剩餘分鐘數 <= 此值時才允許啟動自動停損 (設為 0 代表不限時間)">
+                <span class="unit-prefix">剩餘 &le;</span>
+                <input type="number" id="cfg-sl-minutes" min="0" max="1440" step="1" value="20" required />
+                <span class="unit">分鐘</span>
               </div>
-              <small id="desc-sl-prob">賽事剩餘 &lt;= 20 分鐘且勝率 &lt;= 52% 才自動停損</small>
+              <small id="desc-sl-minutes">賽事結束前 20 分鐘內才允許停損</small>
+            </div>
+
+            <div class="field-group field-group-sl-highlight">
+              <label for="cfg-sl-prob">🛡️ 停損門檻：觸發停損勝率</label>
+              <div class="input-with-unit" title="當進入尾盤時間窗口且勝率跌至此百分比或以下時，自動停損平倉">
+                <input type="checkbox" id="cfg-sl-enabled" checked title="啟用自動停損" />
+                <span class="unit-prefix">跌至 &le;</span>
+                <input type="number" id="cfg-sl-prob" min="5" max="69" step="1" value="52" required />
+                <span class="unit">%</span>
+              </div>
+              <small id="desc-sl-prob">剩餘 &lt;= 20 分且勝率 &lt;= 52% 自動停損</small>
             </div>
           </div>
         </div>
@@ -306,16 +309,19 @@
             </div>
 
             <div class="field-group">
-              <label for="cfg-scan-interval">掃描間隔 &amp; 倉位上限</label>
-              <div class="input-dual-inline">
-                <div class="input-with-unit">
-                  <input type="number" id="cfg-scan-interval" min="2" max="120" step="1" value="5" required title="背景掃描間隔(秒)" />
-                  <span class="unit">秒</span>
-                </div>
-                <div class="input-with-unit">
-                  <input type="number" id="cfg-max-positions" min="1" max="100" step="1" value="15" required title="最大同時持倉數" />
-                  <span class="unit">倉</span>
-                </div>
+              <label for="cfg-scan-interval">背景掃描間隔</label>
+              <div class="input-with-unit">
+                <input type="number" id="cfg-scan-interval" min="2" max="120" step="1" value="5" required title="背景掃描間隔(秒)" />
+                <span class="unit">秒 / 次</span>
+              </div>
+              <small id="desc-scan-interval">每 5 秒自動掃描雙引擎盤口</small>
+            </div>
+
+            <div class="field-group" style="grid-column: 1 / -1;">
+              <label for="cfg-max-positions">最大同時持倉上限</label>
+              <div class="input-with-unit">
+                <input type="number" id="cfg-max-positions" min="1" max="100" step="1" value="15" required title="最大同時持倉數" />
+                <span class="unit">筆活躍持倉</span>
               </div>
               <small id="desc-scan-positions">每 5 秒掃描一次 · 最多同時持有 15 倉</small>
             </div>
@@ -656,6 +662,6 @@
     </div>
   </dialog>
 
-  <script src="/static/app.js?v=20261120_v4" defer></script>
+  <script src="/static/app.js?v=20261120_v5" defer></script>
 </body>
 </html>

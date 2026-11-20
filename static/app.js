@@ -454,6 +454,12 @@
         ? `升至 ${tpProbStr}% 自動獲利了結`
         : "自動停利已關閉（持有至結算或手動平倉）";
     }
+    if ($("desc-sl-minutes")) {
+      $("desc-sl-minutes").textContent =
+        slMinutes > 0
+          ? `賽事結束前 ${slMinutes} 分鐘內才允許停損`
+          : "已設為 0 分鐘（不限時間皆可觸發停損）";
+    }
     if ($("desc-sl-prob")) {
       $("desc-sl-prob").textContent = slConditionText;
     }
@@ -465,6 +471,9 @@
     }
     if ($("desc-hk-gatehour")) {
       $("desc-hk-gatehour").textContent = `香港時間 ${hkGateStr} 後開始自動監測`;
+    }
+    if ($("desc-scan-interval")) {
+      $("desc-scan-interval").textContent = `每 ${scanSec} 秒自動掃描雙引擎盤口`;
     }
     if ($("desc-scan-positions")) {
       $("desc-scan-positions").textContent = `每 ${scanSec} 秒掃描一次 · 最多同時持有 ${maxPos} 倉`;
