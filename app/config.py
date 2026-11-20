@@ -37,6 +37,7 @@ DEFAULT_BOT_CONFIG = {
     "take_profit_prob": float(os.getenv("TAKE_PROFIT_PROB", "0.96")),  # Auto-close when prob reaches 96%
     "auto_stop_loss_enabled": True,
     "stop_loss_prob": float(os.getenv("STOP_LOSS_PROB", "0.52")),      # Cut loss if team drops to 52%
+    "stop_loss_minutes_before_end": int(os.getenv("STOP_LOSS_MINUTES_BEFORE_END", "20")),  # Only trigger SL when <= N mins before end (0 = anytime)
 
     # Sport Category Filter ("ALL" or comma-separated e.g. "NBA,SOCCER,NFL,MLB,NHL,TENNIS,UFC,ESPORTS")
     "allowed_sports": os.getenv("ALLOWED_SPORTS", "ALL"),

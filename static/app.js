@@ -367,6 +367,9 @@
       $("cfg-tp-enabled").checked = Boolean(config.auto_take_profit_enabled);
       $("cfg-tp-prob").value = (config.take_profit_prob * 100).toFixed(1).replace(/\.0$/, "");
       $("cfg-sl-enabled").checked = Boolean(config.auto_stop_loss_enabled);
+      if ($("cfg-sl-minutes")) {
+        $("cfg-sl-minutes").value = config.stop_loss_minutes_before_end ?? 20;
+      }
       $("cfg-sl-prob").value = (config.stop_loss_prob * 100).toFixed(1).replace(/\.0$/, "");
       $("cfg-scan-interval").value = config.scan_interval_sec;
       $("cfg-max-positions").value = config.max_open_positions;
@@ -409,6 +412,7 @@
     const tpEnabled = Boolean($("cfg-tp-enabled")?.checked);
     const tpProbStr = ($("cfg-tp-prob")?.value || "96").trim();
     const slEnabled = Boolean($("cfg-sl-enabled")?.checked);
+    const slMinutes = Number($("cfg-sl-minutes")?.value ?? 20);
     const slProbStr = ($("cfg-sl-prob")?.value || "52").trim();
 
     const hkPriceMinStr = ($("hk-pricemin-input")?.value || "70").trim();
@@ -419,6 +423,12 @@
     const scanSec = Number($("cfg-scan-interval")?.value || 5);
     const maxPos = Number($("cfg-max-positions")?.value || 15);
     const maxBetsPerDay = Math.max(1, Math.floor(dailyBudget / Math.max(1, betAmt)));
+
+    const slConditionText = !slEnabled
+      ? "自動停損已關閉（跌破不自動賣出）"
+      : slMinutes > 0
+      ? `賽事剩餘 <= ${slMinutes} 分鐘且勝率 <= ${slProbStr}% 才自動停損`
+      : `不限剩餘時間，勝率 <= ${slProbStr}% 即自動停損`;
 
     // 1. Update all 12 <small> field descriptions directly below inputs
     if ($("desc-min-prob")) {
@@ -445,9 +455,7 @@
         : "自動停利已關閉（持有至結算或手動平倉）";
     }
     if ($("desc-sl-prob")) {
-      $("desc-sl-prob").textContent = slEnabled
-        ? `跌破 ${slProbStr}% 自動停損平倉`
-        : "自動停損已關閉（跌破不自動賣出）";
+      $("desc-sl-prob").textContent = slConditionText;
     }
     if ($("desc-hk-pricemin")) {
       $("desc-hk-pricemin").textContent = `溫度區間達 ${hkPriceMinStr}% 立即買入（無上限）`;
@@ -464,30 +472,31 @@
 
     // 2. Update Strategy Panel Header Title, Subtitle & Bottom Summary Bar
     if ($("strategy-panel-title")) {
-      $("strategy-panel-title").textContent = `🎯 雙引擎自動投注策略與風控規則設定 (運動 ${minProbStr}%+ · 香港氣溫 ${hkPriceMinStr}%+)`;
+      $("strategy-panel-title").textContent = `🎯 雙引擎自動投注策略與風控設定`;
     }
     if ($("strategy-panel-hint")) {
-      $("strategy-panel-hint").textContent = `即時規則：運動選項介於 ${minProbStr}% ~ ${maxProbStr}% 自動買入 $${betAmt} USDC；香港氣溫於 ${hkGateStr} HKT 後 >= ${hkPriceMinStr}% 自動買入 $${hkStake} USDC`;
+      $("strategy-panel-hint").textContent = `運動 ${minProbStr}%~${maxProbStr}% ($${betAmt}) · 氣溫 ${hkPriceMinStr}%+ ($${hkStake})`;
     }
     if ($("strategy-live-summary")) {
-      const tpSlText =
-        (tpEnabled ? `升至 ${tpProbStr}% 自動停利` : "停利關閉") +
-        " / " +
-        (slEnabled ? `跌破 ${slProbStr}% 自動停損` : "停損關閉");
+      const tpText = tpEnabled ? `升至 ${tpProbStr}% 停利` : "停利關閉";
+      const slSummary = !slEnabled
+        ? "停損關閉"
+        : slMinutes > 0
+        ? `剩餘 <= ${slMinutes} 分鐘且勝率 <= ${slProbStr}% 自動停損`
+        : `勝率 <= ${slProbStr}% 自動停損`;
       $("strategy-live-summary").innerHTML =
-        `📋 <strong>目前策略描述：</strong>` +
-        `【🏟️ 運動賽事】當選項勝率介於 <strong>${escapeHtml(minProbStr)}% ~ ${escapeHtml(maxProbStr)}%</strong>` +
-        `（流動性 &gt;= <strong>$${minLiq.toLocaleString()}</strong>、點差 &lt;= <strong>${escapeHtml(maxSpreadStr)}%</strong>）時，` +
-        `以最接近結束賽事優先自動買入 <strong>$${betAmt.toLocaleString()} USDC</strong>` +
-        `（單日上限 <strong>$${dailyBudget.toLocaleString()}</strong>，${escapeHtml(tpSlText)}）；` +
-        `【🌡️ 香港氣溫】於香港時間 <strong>${escapeHtml(hkGateStr)}</strong> 後，` +
-        `當任一溫度區間達 <strong>${escapeHtml(hkPriceMinStr)}%+</strong> 即自動買入 <strong>$${hkStake.toLocaleString()} USDC</strong>` +
-        `（每 <strong>${scanSec} 秒</strong> 掃描一次，最多持有 <strong>${maxPos} 倉</strong>）。`;
+        `📋 <strong>目前生效策略：</strong>` +
+        `【🏟️ 運動賽事】勝率介於 <strong>${escapeHtml(minProbStr)}% ~ ${escapeHtml(maxProbStr)}%</strong>` +
+        `（深度 &gt;= <strong>$${minLiq.toLocaleString()}</strong>、點差 &lt;= <strong>${escapeHtml(maxSpreadStr)}%</strong>）時，` +
+        `依最快結束優先買入 <strong>$${betAmt.toLocaleString()} USDC</strong>` +
+        `（單日上限 <strong>$${dailyBudget.toLocaleString()}</strong>，${escapeHtml(tpText)} / <strong>${escapeHtml(slSummary)}</strong>）；` +
+        `【🌡️ 香港氣溫】於 <strong>${escapeHtml(hkGateStr)} HKT</strong> 後達 <strong>${escapeHtml(hkPriceMinStr)}%+</strong> 自動買入 <strong>$${hkStake.toLocaleString()} USDC</strong>` +
+        `（每 <strong>${scanSec} 秒</strong> 掃描，上限 <strong>${maxPos} 倉</strong>）。`;
     }
 
     // 3. Update Topbar, KPI labels, Buttons & Monitor Headers below Strategy Panel
     if ($("header-brand-badge")) {
-      $("header-brand-badge").textContent = `運動 ${minProbStr}%+ & 香港氣溫 ${hkPriceMinStr}%+ 雙引擎合一`;
+      $("header-brand-badge").textContent = `🔀 雙引擎整合總覽 (運動 ${minProbStr}%+ · 氣溫 ${hkPriceMinStr}%+)`;
     }
     if ($("view-hkonly-label")) {
       $("view-hkonly-label").textContent = `🌡️ 專注香港氣溫 (${hkPriceMinStr}%+)`;
@@ -854,21 +863,32 @@
       if (openPositions.length === 0) {
         openEl.innerHTML = `<div class="empty-cell">目前尚無運動活躍持倉。當運動項目勝率 &gt;= ${escapeHtml(minProbStr)}% 時將自動建倉。</div>`;
       } else {
+        const slEnabled = Boolean($("cfg-sl-enabled")?.checked);
+        const slMin = Number($("cfg-sl-minutes")?.value ?? 20);
+        const slProb = Number($("cfg-sl-prob")?.value ?? 52) / 100.0;
         openEl.innerHTML = openPositions
           .map((p) => {
             const pnl = Number(p.unrealized_pnl_usdc || 0);
+            const curProb = Number(p.current_prob || 0);
+            const endInfo = p.end_date ? fmtEndCountdown(p.end_date) : "";
+            let slGuardHtml = "";
+            if (slEnabled && curProb <= slProb && slMin > 0) {
+              slGuardHtml = `<div style="font-size:11px;color:#fbbf24;margin-top:2px;">⏳ 勝率已低於停損線，等待賽事剩餘 &lt;= ${slMin} 分鐘才觸發停損</div>`;
+            }
             return `
               <div class="position-card">
                 <div class="pos-top">
                   <div>
                     <div class="pos-title">🏟️ ${escapeHtml(p.event_title)}</div>
                     <div class="pos-outcome">🎯 投注選項：${escapeHtml(p.outcome_label)} (${escapeHtml(p.trading_mode)})</div>
+                    ${endInfo ? `<div style="font-size:11px;color:#93c5fd;margin-top:2px;">${escapeHtml(endInfo)}</div>` : ""}
+                    ${slGuardHtml}
                   </div>
                   <span class="badge ${pnl >= 0 ? "badge-success" : "badge-danger"}">${fmtUsd(pnl, true)}</span>
                 </div>
                 <div class="pos-metrics">
                   <div>進場勝率：<strong>${(Number(p.entry_prob) * 100).toFixed(1)}%</strong></div>
-                  <div>目前勝率：<strong>${(Number(p.current_prob) * 100).toFixed(1)}%</strong></div>
+                  <div>目前勝率：<strong>${(curProb * 100).toFixed(1)}%</strong></div>
                   <div>持有股數：<strong>${Number(p.shares).toFixed(2)}</strong></div>
                   <div>投入本金：<strong>$${Number(p.amount_usdc).toFixed(2)}</strong></div>
                   <div>勝出可領：<strong>$${Number(p.shares).toFixed(2)}</strong></div>
@@ -1120,6 +1140,7 @@
           auto_take_profit_enabled: $("cfg-tp-enabled").checked,
           take_profit_prob: (Number($("cfg-tp-prob").value) || 96) / 100.0,
           auto_stop_loss_enabled: $("cfg-sl-enabled").checked,
+          stop_loss_minutes_before_end: Math.max(0, Number($("cfg-sl-minutes")?.value ?? 20)),
           stop_loss_prob: (Number($("cfg-sl-prob").value) || 52) / 100.0,
           scan_interval_sec: Number($("cfg-scan-interval").value) || 5,
           max_open_positions: Number($("cfg-max-positions").value) || 15,
@@ -1167,6 +1188,14 @@
 
     $("save-config-btn")?.addEventListener("click", async () => {
       await saveStrategyConfig(false);
+    });
+
+    $("toggle-strategy-body-btn")?.addEventListener("click", () => {
+      const formEl = $("strategy-form");
+      const btnEl = $("toggle-strategy-body-btn");
+      if (!formEl || !btnEl) return;
+      const isHidden = formEl.classList.toggle("hidden");
+      btnEl.textContent = isHidden ? "🔽 展開參數" : "🔼 收合參數";
     });
 
     $("bot-toggle-btn")?.addEventListener("click", async () => {

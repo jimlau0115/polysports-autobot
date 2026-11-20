@@ -65,6 +65,7 @@ class Database:
                     status TEXT NOT NULL DEFAULT 'OPEN', -- OPEN, CLOSED_TP, CLOSED_SL, CLOSED_MANUAL, SETTLED_WIN
                     order_id TEXT DEFAULT '',
                     trigger_reason TEXT DEFAULT '',
+                    end_date TEXT DEFAULT '',
                     opened_at TEXT NOT NULL,
                     closed_at TEXT
                 );
@@ -91,6 +92,10 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_trade_logs_created ON trade_logs(created_at DESC);
                 """
             )
+            # Schema migration: ensure end_date column exists on existing positions tables
+            cols = {row["name"] for row in conn.execute("PRAGMA table_info(positions)").fetchall()}
+            if "end_date" not in cols:
+                conn.execute("ALTER TABLE positions ADD COLUMN end_date TEXT DEFAULT ''")
             # Ensure default config exists
             cur = conn.execute("SELECT value FROM settings WHERE key = 'bot_config'")
             row = cur.fetchone()
@@ -196,7 +201,7 @@ class Database:
             "paper_initial_balance",
             "paper_cash_balance",
         }
-        int_keys = {"scan_interval_sec", "max_open_positions"}
+        int_keys = {"scan_interval_sec", "max_open_positions", "stop_loss_minutes_before_end"}
 
         for k, v in partial.items():
             if k not in DEFAULT_BOT_CONFIG:
@@ -206,7 +211,12 @@ class Database:
             elif k in float_keys:
                 current[k] = float(v)
             elif k in int_keys:
-                current[k] = max(2, int(v)) if k == "scan_interval_sec" else max(1, int(v))
+                if k == "scan_interval_sec":
+                    current[k] = max(2, int(v))
+                elif k == "stop_loss_minutes_before_end":
+                    current[k] = max(0, min(1440, int(v)))
+                else:
+                    current[k] = max(1, int(v))
             else:
                 current[k] = str(v)
 
@@ -402,8 +412,8 @@ class Database:
                     market_id, condition_id, token_id, sport, event_title, question,
                     market_slug, outcome_label, outcome_index, trading_mode, trigger_type,
                     entry_prob, current_prob, shares, amount_usdc, unrealized_pnl_usdc,
-                    realized_pnl_usdc, status, order_id, trigger_reason, opened_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?)
+                    realized_pnl_usdc, status, order_id, trigger_reason, end_date, opened_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?)
                 """,
                 (
                     str(pos["market_id"]),
@@ -425,6 +435,7 @@ class Database:
                     0.0,
                     str(pos.get("order_id", "")),
                     str(pos.get("trigger_reason", "")),
+                    str(pos.get("end_date", "")),
                     now,
                 ),
             )
@@ -455,7 +466,9 @@ class Database:
             rows = conn.execute(query, params).fetchall()
             return [dict(r) for r in rows]
 
-    def update_open_position_mark(self, pos_id: int, current_prob: float) -> Optional[Dict[str, Any]]:
+    def update_open_position_mark(
+        self, pos_id: int, current_prob: float, end_date: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM positions WHERE id = ? AND status = 'OPEN'", (pos_id,)).fetchone()
             if not row:
@@ -464,9 +477,10 @@ class Database:
             amount_usdc = float(row["amount_usdc"])
             market_value = shares * current_prob
             unrealized = round(market_value - amount_usdc, 2)
+            effective_end = str(end_date or row["end_date"] or "")
             conn.execute(
-                "UPDATE positions SET current_prob = ?, unrealized_pnl_usdc = ? WHERE id = ?",
-                (round(current_prob, 4), unrealized, pos_id),
+                "UPDATE positions SET current_prob = ?, unrealized_pnl_usdc = ?, end_date = ? WHERE id = ?",
+                (round(current_prob, 4), unrealized, effective_end, pos_id),
             )
             updated = conn.execute("SELECT * FROM positions WHERE id = ?", (pos_id,)).fetchone()
             return dict(updated) if updated else None

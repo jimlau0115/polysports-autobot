@@ -274,6 +274,21 @@ class TradingEngine:
             "target_outcome": top,
         }
 
+    @staticmethod
+    def _minutes_until_end(end_date_str: str) -> Optional[float]:
+        if not end_date_str:
+            return None
+        try:
+            clean = str(end_date_str).strip()
+            if clean.endswith("Z"):
+                clean = clean[:-1] + "+00:00"
+            dt = datetime.fromisoformat(clean)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return (dt - datetime.now(timezone.utc)).total_seconds() / 60.0
+        except Exception:
+            return None
+
     async def _update_and_check_open_positions(
         self, markets: List[Dict[str, Any]], cfg: Dict[str, Any]
     ) -> None:
@@ -286,6 +301,7 @@ class TradingEngine:
         tp_prob = float(cfg.get("take_profit_prob", 0.96))
         sl_enabled = bool(cfg.get("auto_stop_loss_enabled", True))
         sl_prob = float(cfg.get("stop_loss_prob", 0.52))
+        sl_min_before_end = int(cfg.get("stop_loss_minutes_before_end", 20))
 
         for pos in open_positions:
             m = market_map.get(pos["market_id"])
@@ -302,7 +318,8 @@ class TradingEngine:
             if matched_prob is None:
                 continue
 
-            self.db.update_open_position_mark(pos["id"], matched_prob)
+            effective_end_date = str(m.get("end_date") or pos.get("end_date") or "")
+            self.db.update_open_position_mark(pos["id"], matched_prob, end_date=effective_end_date)
 
             # Check Auto Take-Profit
             if tp_enabled and matched_prob >= tp_prob:
@@ -323,25 +340,37 @@ class TradingEngine:
                             f"勝率升至 {matched_prob * 100:.1f}% (>= {tp_prob * 100:.0f}%)，實現損益 +${pnl:,.2f} USDC"
                         ),
                     )
-            # Check Auto Stop-Loss
+            # Check Auto Stop-Loss (with near-end time window prerequisite)
             elif sl_enabled and matched_prob <= sl_prob:
-                closed = self.db.close_position(pos["id"], matched_prob, close_status="CLOSED_SL")
-                if closed:
-                    pnl = float(closed["realized_pnl_usdc"])
-                    self.db.add_log(
-                        level="EXIT",
-                        trading_mode=closed["trading_mode"],
-                        sport=closed["sport"],
-                        market_id=closed["market_id"],
-                        event_title=closed["event_title"],
-                        outcome_label=closed["outcome_label"],
-                        prob=matched_prob,
-                        amount_usdc=float(closed["amount_usdc"]),
-                        message=(
-                            f"🛡️ 自動停損平倉：{closed['event_title']} [{closed['outcome_label']}] "
-                            f"勝率跌至 {matched_prob * 100:.1f}% (<= {sl_prob * 100:.0f}%)，實現損益 ${pnl:,.2f} USDC"
-                        ),
-                    )
+                rem_min = self._minutes_until_end(effective_end_date)
+                if sl_min_before_end <= 0:
+                    time_window_ok = True
+                else:
+                    time_window_ok = rem_min is not None and rem_min <= float(sl_min_before_end)
+
+                if time_window_ok:
+                    closed = self.db.close_position(pos["id"], matched_prob, close_status="CLOSED_SL")
+                    if closed:
+                        pnl = float(closed["realized_pnl_usdc"])
+                        rem_desc = (
+                            f"賽事剩餘 {max(0, round(rem_min))} 分鐘 (<= {sl_min_before_end} 分) 且"
+                            if sl_min_before_end > 0 and rem_min is not None
+                            else ""
+                        )
+                        self.db.add_log(
+                            level="EXIT",
+                            trading_mode=closed["trading_mode"],
+                            sport=closed["sport"],
+                            market_id=closed["market_id"],
+                            event_title=closed["event_title"],
+                            outcome_label=closed["outcome_label"],
+                            prob=matched_prob,
+                            amount_usdc=float(closed["amount_usdc"]),
+                            message=(
+                                f"🛡️ 自動停損平倉：{closed['event_title']} [{closed['outcome_label']}] "
+                                f"{rem_desc}勝率跌至 {matched_prob * 100:.1f}% (<= {sl_prob * 100:.0f}%)，實現損益 ${pnl:,.2f} USDC"
+                            ),
+                        )
 
     async def _attempt_auto_bet(
         self,
@@ -516,6 +545,7 @@ class TradingEngine:
                 "amount_usdc": amount_usdc,
                 "order_id": order_id,
                 "trigger_reason": trigger_reason,
+                "end_date": market.get("end_date", ""),
             }
         )
 

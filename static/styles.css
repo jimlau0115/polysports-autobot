@@ -1320,10 +1320,63 @@ html, body {
 }
 
 /* ============================================================
-   Unified All-in-One Dashboard Styles (Sports 70%+ & HK Temp 70%+)
+   Unified All-in-One Dashboard Styles (Refined UI v2)
    ============================================================ */
-.kpi-grid-6 {
-  grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+.topbar-left,
+.topbar-right {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.action-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.mono-num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.dot-sep {
+  margin: 0 5px;
+  color: var(--text-muted);
+}
+
+.inline-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.kpi-grid-4 {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+@media (max-width: 1200px) {
+  .kpi-grid-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .kpi-grid-4 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.kpi-badges-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .kpi-inline-divider {
@@ -1338,15 +1391,101 @@ html, body {
   color: #60a5fa;
 }
 
-.strategy-grid-unified {
-  grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+/* Grouped Strategy Form */
+.strategy-groups-wrapper {
+  display: grid;
+  grid-template-columns: 1.9fr 1fr;
+  gap: 14px;
+  padding: 14px 16px;
 }
 
-.field-group-hk {
-  background: rgba(16, 185, 129, 0.06);
-  border: 1px solid rgba(16, 185, 129, 0.25);
+@media (max-width: 1280px) {
+  .strategy-groups-wrapper {
+    grid-template-columns: 1fr;
+  }
+}
+
+.strategy-group-card {
+  background: rgba(9, 13, 22, 0.55);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.strategy-group-hk {
+  border-color: rgba(16, 185, 129, 0.3);
+  background: linear-gradient(145deg, rgba(9, 13, 22, 0.65) 0%, rgba(16, 185, 129, 0.05) 100%);
+}
+
+.strategy-group-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(51, 72, 110, 0.35);
+}
+
+.strategy-group-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #e2e8f0;
+}
+
+.strategy-group-sub {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.strategy-subgrid {
+  display: grid;
+  gap: 12px 14px;
+}
+
+.strategy-subgrid-sports {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.strategy-subgrid-hk {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 960px) {
+  .strategy-subgrid-sports {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .strategy-subgrid-sports,
+  .strategy-subgrid-hk {
+    grid-template-columns: 1fr;
+  }
+}
+
+.field-group-sl-highlight {
+  background: rgba(244, 63, 94, 0.06);
+  border: 1px solid rgba(244, 63, 94, 0.28);
   border-radius: 8px;
-  padding: 8px 10px;
+  padding: 7px 9px;
+}
+
+.input-sl-combo {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr;
+  align-items: center;
+  gap: 5px;
+}
+
+.unit-prefix {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .input-dual-inline {
@@ -1358,8 +1497,19 @@ html, body {
 .main-monitors-stack {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
   min-width: 0;
+}
+
+.side-column {
+  position: sticky;
+  top: 74px;
+}
+
+@media (max-width: 1220px) {
+  .side-column {
+    position: static;
+  }
 }
 
 .hktemp-integrated-panel {
@@ -1413,16 +1563,16 @@ html, body {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 10px 16px;
+  padding: 8px 14px;
   border-radius: var(--radius-md);
-  font-size: 12.5px;
+  font-size: 12px;
   border: 1px solid var(--border-subtle);
   background: var(--bg-surface);
 }
 
 .ledger-banner-paper {
-  border-color: rgba(59, 130, 246, 0.38);
-  background: linear-gradient(90deg, rgba(30, 58, 138, 0.25) 0%, rgba(17, 24, 39, 0.9) 100%);
+  border-color: rgba(59, 130, 246, 0.35);
+  background: linear-gradient(90deg, rgba(30, 58, 138, 0.22) 0%, rgba(17, 24, 39, 0.9) 100%);
 }
 
 .ledger-banner-live {
@@ -1446,18 +1596,19 @@ html, body {
 }
 
 .strategy-summary-bar {
-  padding: 11px 18px;
+  padding: 10px 16px;
   border-top: 1px solid var(--border-subtle);
-  background: rgba(16, 185, 129, 0.06);
+  background: rgba(16, 185, 129, 0.05);
   color: #cbd5e1;
-  font-size: 12.5px;
-  line-height: 1.55;
+  font-size: 12px;
+  line-height: 1.5;
   font-variant-numeric: tabular-nums;
 }
 
 .strategy-summary-bar strong {
   color: #6ee7b7;
 }
+
 
 
 
