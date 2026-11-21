@@ -27,8 +27,15 @@ DEFAULT_HK_TEMP_CONFIG = {
 }
 
 INITIAL_WEATHER_HISTORY = [
-    {"marketDate": "2026-11-19", "forecastMaxC": 22.0, "forecastIssuedAt": "2026-11-19T00:00:00+08:00", "forecastDate": "20261119", "officialMaxC": None, "officialLabel": "觀測中", "awsMaxC": 22.0, "awsOccurredAt": "2026-11-19T00:10:00+08:00", "awsFinalized": True, "awsTimeLabel": "00:10", "awsTimeDetail": "", "forecastErrorC": None},
-    {"marketDate": "2026-11-18", "forecastMaxC": 27.0, "forecastIssuedAt": "2026-11-18T00:00:00+08:00", "forecastDate": "20261118", "officialMaxC": None, "officialLabel": "觀測中", "awsMaxC": 27.3, "awsOccurredAt": "2026-11-18T11:20:00+08:00", "awsFinalized": True, "awsTimeLabel": "11:20", "awsTimeDetail": "", "forecastErrorC": None},
+    {"marketDate": "2026-11-20", "forecastMaxC": 19.0, "forecastIssuedAt": "2026-11-20T00:00:00+08:00", "forecastDate": "20261120", "officialMaxC": 19.2, "officialLabel": "19.2°C", "awsMaxC": 19.2, "awsOccurredAt": "2026-11-20T14:10:00+08:00", "awsFinalized": True, "awsTimeLabel": "14:10", "awsTimeDetail": "", "forecastErrorC": 0.2},
+    {"marketDate": "2026-11-19", "forecastMaxC": 22.0, "forecastIssuedAt": "2026-11-19T00:00:00+08:00", "forecastDate": "20261119", "officialMaxC": 22.0, "officialLabel": "22.0°C", "awsMaxC": 22.0, "awsOccurredAt": "2026-11-19T00:10:00+08:00", "awsFinalized": True, "awsTimeLabel": "00:10", "awsTimeDetail": "", "forecastErrorC": 0.0},
+    {"marketDate": "2026-11-18", "forecastMaxC": 27.0, "forecastIssuedAt": "2026-11-18T00:00:00+08:00", "forecastDate": "20261118", "officialMaxC": 27.3, "officialLabel": "27.3°C", "awsMaxC": 27.3, "awsOccurredAt": "2026-11-18T11:20:00+08:00", "awsFinalized": True, "awsTimeLabel": "11:20", "awsTimeDetail": "", "forecastErrorC": 0.3},
+    {"marketDate": "2026-11-17", "forecastMaxC": 27.0, "forecastIssuedAt": "2026-11-17T00:00:00+08:00", "forecastDate": "20261117", "officialMaxC": 27.4, "officialLabel": "27.4°C", "awsMaxC": 27.4, "awsOccurredAt": "2026-11-17T13:50:00+08:00", "awsFinalized": True, "awsTimeLabel": "13:50", "awsTimeDetail": "", "forecastErrorC": 0.4},
+    {"marketDate": "2026-11-16", "forecastMaxC": 27.0, "forecastIssuedAt": "2026-11-16T00:00:00+08:00", "forecastDate": "20261116", "officialMaxC": 27.2, "officialLabel": "27.2°C", "awsMaxC": 27.2, "awsOccurredAt": "2026-11-16T14:20:00+08:00", "awsFinalized": True, "awsTimeLabel": "14:20", "awsTimeDetail": "", "forecastErrorC": 0.2},
+    {"marketDate": "2026-11-15", "forecastMaxC": 26.0, "forecastIssuedAt": "2026-11-15T00:00:00+08:00", "forecastDate": "20261115", "officialMaxC": 25.9, "officialLabel": "25.9°C", "awsMaxC": 25.9, "awsOccurredAt": "2026-11-15T13:30:00+08:00", "awsFinalized": True, "awsTimeLabel": "13:30", "awsTimeDetail": "", "forecastErrorC": -0.1},
+    {"marketDate": "2026-11-14", "forecastMaxC": 25.0, "forecastIssuedAt": "2026-11-14T00:00:00+08:00", "forecastDate": "20261114", "officialMaxC": 25.5, "officialLabel": "25.5°C", "awsMaxC": 25.5, "awsOccurredAt": "2026-11-14T12:40:00+08:00", "awsFinalized": True, "awsTimeLabel": "12:40", "awsTimeDetail": "", "forecastErrorC": 0.5},
+    {"marketDate": "2026-11-13", "forecastMaxC": 27.0, "forecastIssuedAt": "2026-11-13T00:00:00+08:00", "forecastDate": "20261113", "officialMaxC": 26.7, "officialLabel": "26.7°C", "awsMaxC": 26.7, "awsOccurredAt": "2026-11-13T14:00:00+08:00", "awsFinalized": True, "awsTimeLabel": "14:00", "awsTimeDetail": "", "forecastErrorC": -0.3},
+    {"marketDate": "2026-11-12", "forecastMaxC": 27.0, "forecastIssuedAt": "2026-11-12T00:00:00+08:00", "forecastDate": "20261112", "officialMaxC": 27.4, "officialLabel": "27.4°C", "awsMaxC": 27.4, "awsOccurredAt": "2026-11-12T13:50:00+08:00", "awsFinalized": True, "awsTimeLabel": "13:50", "awsTimeDetail": "", "forecastErrorC": 0.4},
     {"marketDate": "2026-10-31", "forecastMaxC": None, "forecastIssuedAt": None, "forecastDate": None, "officialMaxC": 29.2, "officialLabel": "29.2°C", "awsMaxC": None, "awsOccurredAt": None, "awsFinalized": False, "awsTimeLabel": "—", "awsTimeDetail": "", "forecastErrorC": None},
     {"marketDate": "2026-10-30", "forecastMaxC": None, "forecastIssuedAt": None, "forecastDate": None, "officialMaxC": 30.2, "officialLabel": "30.2°C", "awsMaxC": None, "awsOccurredAt": None, "awsFinalized": False, "awsTimeLabel": "—", "awsTimeDetail": "", "forecastErrorC": None},
     {"marketDate": "2026-10-29", "forecastMaxC": None, "forecastIssuedAt": None, "forecastDate": None, "officialMaxC": 29.0, "officialLabel": "29°C", "awsMaxC": None, "awsOccurredAt": None, "awsFinalized": False, "awsTimeLabel": "—", "awsTimeDetail": "", "forecastErrorC": None},
@@ -134,7 +141,7 @@ class HkTempEngine:
                 except Exception:
                     pass
 
-            # Seed initial historical weather records
+            # Seed or backfill initial historical weather records
             for rec in INITIAL_WEATHER_HISTORY:
                 conn.execute(
                     """
@@ -160,6 +167,21 @@ class HkTempEngine:
                         now_iso,
                     ),
                 )
+                if rec["officialMaxC"] is not None:
+                    conn.execute(
+                        """
+                        UPDATE hk_weather_records
+                        SET official_max_c = ?, official_label = ?, forecast_error_c = COALESCE(forecast_error_c, ?), updated_at = ?
+                        WHERE market_date = ? AND (official_max_c IS NULL OR official_label = '觀測中')
+                        """,
+                        (
+                            rec["officialMaxC"],
+                            rec["officialLabel"],
+                            rec["forecastErrorC"],
+                            now_iso,
+                            rec["marketDate"],
+                        ),
+                    )
 
     def get_config(self) -> Dict[str, Any]:
         with self._connect() as conn:
@@ -445,7 +467,7 @@ class HkTempEngine:
             except Exception:
                 self.observatory_state = "delayed"
 
-            # 2. Fetch HKO Local Weather Forecast (flw) for forecast max/min & weather overview
+            # 2. Fetch HKO Local Weather Forecast (flw) & 9-day forecast (fnd)
             try:
                 flw_url = "https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=flw&lang=tc"
                 async with session.get(flw_url) as resp:
@@ -457,12 +479,99 @@ class HkTempEngine:
             except Exception:
                 pass
 
-        # Update today's row in hk_weather_records if needed
+            # 3. Fetch HKO 10-minute Maximum Air Temperature Since Midnight CSV (HK Observatory station)
+            today_aws_max_c: Optional[float] = None
+            today_aws_time_str: Optional[str] = None
+            try:
+                csv_url = "https://data.weather.gov.hk/weatherAPI/hko_data/regional-weather/latest_since_midnight_maxmin.csv"
+                async with session.get(csv_url) as resp:
+                    if resp.status == 200:
+                        csv_text = await resp.text()
+                        for line in csv_text.splitlines():
+                            parts = [p.strip() for p in line.split(",")]
+                            if len(parts) >= 3 and ("HK Observatory" in parts[1] or "香港天文台" in parts[1] or "香港天文臺" in parts[1]):
+                                dt_raw = parts[0]  # e.g. 202611212140
+                                if dt_raw.startswith(dt_hkt.strftime("%Y%m%d")):
+                                    today_aws_max_c = float(parts[2])
+                                    if len(dt_raw) >= 12:
+                                        today_aws_time_str = f"{dt_raw[8:10]}:{dt_raw[10:12]}"
+                                break
+            except Exception:
+                pass
+
+            # 4. Fetch HKO Official Daily Extract (current month XML/JSON) & CLMMAXT to backfill past days
+            official_by_date: Dict[str, float] = {}
+            try:
+                ym_str = dt_hkt.strftime("%Y%m")
+                de_url = f"https://www.hko.gov.hk/cis/dailyExtract/dailyExtract_{ym_str}.xml"
+                async with session.get(de_url) as resp:
+                    if resp.status == 200:
+                        de_text = await resp.text()
+                        de_json = json.loads(de_text)
+                        month_blocks = de_json.get("stn", {}).get("data", [])
+                        for mb in month_blocks:
+                            m_num = int(mb.get("month") or dt_hkt.month)
+                            for d_row in mb.get("dayData", []):
+                                if isinstance(d_row, list) and len(d_row) >= 3 and str(d_row[0]).strip().isdigit():
+                                    d_num = int(str(d_row[0]).strip())
+                                    max_val = float(str(d_row[2]).strip())
+                                    d_iso = f"{dt_hkt.year:04d}-{m_num:02d}-{d_num:02d}"
+                                    official_by_date[d_iso] = max_val
+            except Exception:
+                pass
+
+        # Update today's row & backfill past days in hk_weather_records
         with self._connect() as conn:
+            # Backfill official Daily Extract temperatures for any date published by HKO
+            for d_iso, off_val in official_by_date.items():
+                lbl = f"{off_val:.1f}°C"
+                existing = conn.execute(
+                    "SELECT forecast_max_c, official_max_c, official_label FROM hk_weather_records WHERE market_date = ?",
+                    (d_iso,),
+                ).fetchone()
+                if existing:
+                    if existing["official_max_c"] is None or existing["official_label"] == "觀測中":
+                        fc_val = existing["forecast_max_c"]
+                        err_val = round(off_val - float(fc_val), 1) if fc_val is not None else None
+                        conn.execute(
+                            """
+                            UPDATE hk_weather_records
+                            SET official_max_c = ?, official_label = ?, forecast_error_c = ?, aws_finalized = 1, updated_at = ?
+                            WHERE market_date = ?
+                            """,
+                            (off_val, lbl, err_val, dt_hkt.isoformat(), d_iso),
+                        )
+
+            # Also finalize any past date (< market_date) still stuck on '觀測中' using its recorded aws_max_c
+            stuck_rows = conn.execute(
+                """
+                SELECT market_date, forecast_max_c, aws_max_c
+                FROM hk_weather_records
+                WHERE market_date < ? AND (official_max_c IS NULL OR official_label = '觀測中')
+                """,
+                (market_date,),
+            ).fetchall()
+            for sr in stuck_rows:
+                if sr["aws_max_c"] is not None:
+                    fin_val = round(float(sr["aws_max_c"]), 1)
+                    fin_lbl = f"{fin_val:.1f}°C"
+                    fc_v = sr["forecast_max_c"]
+                    err_v = round(fin_val - float(fc_v), 1) if fc_v is not None else None
+                    conn.execute(
+                        """
+                        UPDATE hk_weather_records
+                        SET official_max_c = ?, official_label = ?, forecast_error_c = ?, aws_finalized = 1, updated_at = ?
+                        WHERE market_date = ?
+                        """,
+                        (fin_val, fin_lbl, err_v, dt_hkt.isoformat(), sr["market_date"]),
+                    )
+
             row = conn.execute(
                 "SELECT * FROM hk_weather_records WHERE market_date = ?", (market_date,)
             ).fetchone()
+            eff_aws_max = today_aws_max_c if today_aws_max_c is not None else float(current_temp["tempC"])
             if not row:
+                t_lbl = today_aws_time_str or dt_hkt.strftime("%H:%M")
                 conn.execute(
                     """
                     INSERT INTO hk_weather_records (
@@ -477,21 +586,43 @@ class HkTempEngine:
                         forecast_info["issuedAt"],
                         forecast_info["forecastDate"],
                         None,
-                        "觀測中",
-                        current_temp["tempC"],
+                        f"{eff_aws_max:.1f}°C (今日最高)" if today_aws_max_c is not None else "觀測中",
+                        eff_aws_max,
                         current_temp["recordTime"],
                         0,
-                        dt_hkt.strftime("%H:%M"),
+                        t_lbl,
                         "",
-                        None,
+                        round(eff_aws_max - float(forecast_info["maxC"]), 1) if today_aws_max_c is not None else None,
                         dt_hkt.isoformat(),
                     ),
                 )
+                max_time["label"] = t_lbl
+                if today_aws_max_c is not None:
+                    official_max = {"status": "live_max", "label": f"{eff_aws_max:.1f}°C (今日最高)", "tempC": eff_aws_max}
             else:
-                if row["aws_max_c"] is not None:
-                    max_time["label"] = row["aws_time_label"] or max_time["label"]
-                if row["forecast_max_c"] is not None:
-                    forecast_info["maxC"] = float(row["forecast_max_c"])
+                prev_aws = float(row["aws_max_c"]) if row["aws_max_c"] is not None else None
+                new_aws = max(prev_aws or -99.0, eff_aws_max)
+                new_time_lbl = row["aws_time_label"] or dt_hkt.strftime("%H:%M")
+                if prev_aws is None or eff_aws_max > prev_aws + 0.01:
+                    new_time_lbl = today_aws_time_str or dt_hkt.strftime("%H:%M")
+                fc_max = float(row["forecast_max_c"]) if row["forecast_max_c"] is not None else float(forecast_info["maxC"])
+                forecast_info["maxC"] = fc_max
+                off_lbl = row["official_label"]
+                if row["official_max_c"] is not None:
+                    off_lbl = f"{float(row['official_max_c']):.1f}°C"
+                elif new_aws > -50:
+                    off_lbl = f"{new_aws:.1f}°C (今日最高)"
+                err_now = round(new_aws - fc_max, 1) if new_aws > -50 else row["forecast_error_c"]
+                conn.execute(
+                    """
+                    UPDATE hk_weather_records
+                    SET aws_max_c = ?, aws_time_label = ?, official_label = ?, forecast_error_c = ?, updated_at = ?
+                    WHERE market_date = ? AND official_max_c IS NULL
+                    """,
+                    (new_aws, new_time_lbl, off_lbl, err_now, dt_hkt.isoformat(), market_date),
+                )
+                max_time["label"] = new_time_lbl
+                official_max = {"status": "live_max", "label": off_lbl, "tempC": new_aws}
 
         return {
             "current": current_temp,
