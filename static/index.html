@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark" />
-  <title>PolyQuant 雙引擎量化終端 | Polymarket 運動賽事 &amp; 香港每日最高氣溫自動交易</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261120_v5" />
+  <title>PolyQuant 雙引擎量化終端 | Polymarket 運動賽事、香港氣溫 &amp; 被動做市流動性獎勵</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20261121_v6" />
 </head>
 <body>
   <!-- =================================================================== -->
@@ -18,7 +18,7 @@
         <div>
           <div class="brand-title-row">
             <h1 class="brand-title">PolyQuant Hub</h1>
-            <span class="badge badge-accent" id="header-brand-badge">🔀 雙引擎整合總覽</span>
+            <span class="badge badge-accent" id="header-brand-badge">運動 70%+ · 氣溫 70%+ · $500 LP 做市</span>
           </div>
           <p class="brand-subtitle">
             香港時間 <span id="header-hkt-clock" class="mono-num">--:--:--</span>
@@ -29,6 +29,17 @@
             </span>
           </p>
         </div>
+      </div>
+
+      <!-- Main Workspace Switcher: Directional Dual-Engine vs $500 Passive LP Market Making -->
+      <div class="module-switcher" role="tablist" aria-label="策略工作區切換">
+        <button type="button" id="nav-directional-btn" class="module-tab active" role="tab" aria-selected="true">
+          🔀 雙引擎整合總覽
+        </button>
+        <button type="button" id="nav-lp-btn" class="module-tab" role="tab" aria-selected="false">
+          💧 被動做市 / 流動性獎勵
+          <span class="badge badge-success" id="lp-nav-badge">$500 LP</span>
+        </button>
       </div>
     </div>
 
@@ -89,6 +100,10 @@
       </div>
     </div>
 
+    <!-- ================================================================= -->
+    <!-- VIEW 1: DIRECTIONAL DUAL-ENGINE (SPORTS 70%+ & HK TEMP 70%+)      -->
+    <!-- ================================================================= -->
+    <div id="view-directional-dashboard" class="dashboard-view-stack">
     <!-- 1. Clean 4-Card Executive KPI Strip -->
     <section class="kpi-grid kpi-grid-4" aria-label="全系統核心指標">
       <!-- KPI 1: Equity & Cash -->
@@ -505,6 +520,284 @@
         </section>
       </aside>
     </div>
+    </div><!-- /#view-directional-dashboard -->
+
+    <!-- ================================================================= -->
+    <!-- VIEW 2: PASSIVE MARKET MAKING & LIQUIDITY REWARDS ($500 LP)       -->
+    <!-- ================================================================= -->
+    <div id="view-lp-dashboard" class="dashboard-view-stack hidden">
+      <!-- 1. 4-Card LP Executive KPI Strip -->
+      <section class="kpi-grid kpi-grid-4" aria-label="被動做市與流動性獎勵核心指標">
+        <!-- LP KPI 1: Capital & Slot Allocation -->
+        <article class="kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-label" id="lp-kpi-capital-label">💰 做市總淨值 ($500 起始資金)</span>
+            <button type="button" id="lp-reset-paper-btn" class="btn-link" title="重置 $500 模擬被動做市帳戶">重置 $500 模擬金</button>
+          </div>
+          <div class="kpi-value" id="lp-kpi-equity">$500.00</div>
+          <div class="kpi-sub">
+            雙邊掛單中 <strong id="lp-kpi-deployed">$400.00</strong> (<span id="lp-kpi-slots">4 / 4 槽位</span>) · 20% 緩衝金 <strong id="lp-kpi-reserve">$100.00</strong>
+          </div>
+        </article>
+
+        <!-- LP KPI 2: Estimated Daily / Monthly Liquidity Rewards & APR -->
+        <article class="kpi-card kpi-card-highlight">
+          <div class="kpi-header">
+            <span class="kpi-label">💧 預估流動性獎勵收益 (Quadratic)</span>
+            <span class="badge badge-success" id="lp-kpi-apr-badge">APR --%</span>
+          </div>
+          <div class="kpi-value pnl-pos" id="lp-kpi-daily-reward">+$0.00 / 日</div>
+          <div class="kpi-sub">
+            預估月收益 <strong id="lp-kpi-monthly-reward">+$0.00 / 月</strong> · 雙邊平方總得分 <strong id="lp-kpi-qscore">Q = 0.0</strong>
+          </div>
+        </article>
+
+        <!-- LP KPI 3: Accrued Rewards + Maker Spread PnL -->
+        <article class="kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-label">📈 累計已領獎勵 &amp; 價差總損益</span>
+            <span class="badge badge-accent">Maker 0% 手續費</span>
+          </div>
+          <div class="kpi-value pnl-pos" id="lp-kpi-total-profit">+$0.00</div>
+          <div class="kpi-sub">
+            流動性獎勵 <strong class="pnl-pos" id="lp-kpi-accrued-reward">+$0.0000</strong> · 買賣價差損益 <strong id="lp-kpi-spread-pnl">+$0.00</strong>
+          </div>
+        </article>
+
+        <!-- LP KPI 4: 4-Layer Anti-Adverse Selection & Inventory Status -->
+        <article class="kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-label">🛡️ 四層防毒流風控 &amp; 淨庫存暴露</span>
+            <span class="badge badge-outline" id="lp-kpi-shield-badge">POST_ONLY 護盾</span>
+          </div>
+          <div class="kpi-value" id="lp-kpi-inventory">$0.00</div>
+          <div class="kpi-sub" id="lp-kpi-risk-sub">
+            單盤庫存上限 <strong id="lp-kpi-max-inv">$60</strong> · 賽前 <strong id="lp-kpi-cutoff-hrs">6h</strong> 自動清退
+          </div>
+        </article>
+      </section>
+
+      <!-- 2. $500 4-Layer Passive Market Making Strategy Configuration Panel -->
+      <section class="panel strategy-panel">
+        <div class="panel-header">
+          <div class="panel-title-group">
+            <div class="brand-title-row">
+              <h2 class="panel-title" id="lp-strategy-title">💧 $500 被動做市與流動性獎勵四層防護策略設定</h2>
+              <span class="badge badge-accent" id="lp-strategy-badge">二檔護盾雙邊報價 · 防毒流秒撤</span>
+            </div>
+          </div>
+          <div class="panel-actions">
+            <button type="button" id="lp-auto-toggle-btn" class="btn btn-bot-active">
+              <span>💧 自動選盤做市：運行中</span>
+            </button>
+            <button type="button" id="lp-test-killswitch-btn" class="btn btn-secondary" title="模擬某個做市盤口中價瞬間跳動 > 2.5¢，測試第四層毫秒級防毒流撤單保護">
+              ⚡ 測試突發波動閃電撤單
+            </button>
+            <button type="button" id="lp-save-config-btn" class="btn btn-primary">
+              💾 儲存做市設定
+            </button>
+            <button type="button" id="lp-toggle-body-btn" class="btn btn-ghost">
+              🔼 收合參數
+            </button>
+          </div>
+        </div>
+
+        <form id="lp-strategy-form" class="strategy-groups-wrapper">
+          <!-- Group A: Layer 1 & 2 - Capital Allocation & Quadratic Two-Sided Quoting -->
+          <div class="strategy-group-card">
+            <div class="strategy-group-header">
+              <span class="strategy-group-title">💰 第一～二層：資金槽位切分 &amp; 二次方高分雙邊報價 (Quadratic Quoting)</span>
+              <span class="strategy-group-sub">強制 POST_ONLY 免手續費 · 雙邊對稱掛單享 300% 滿額權重</span>
+            </div>
+            <div class="strategy-subgrid strategy-subgrid-sports">
+              <div class="field-group">
+                <label for="lp-cfg-capital">做市總資金池</label>
+                <div class="input-with-unit">
+                  <input type="number" id="lp-cfg-capital" min="50" max="100000" step="50" value="500" required />
+                  <span class="unit">USDC</span>
+                </div>
+                <small id="lp-desc-capital">總資金 $500（可動用掛單 $400 + 緩衝 $100）</small>
+              </div>
+
+              <div class="field-group">
+                <label for="lp-cfg-reserve">現金緩衝保留比例</label>
+                <div class="input-with-unit">
+                  <input type="number" id="lp-cfg-reserve" min="0" max="80" step="5" value="20" required />
+                  <span class="unit">%</span>
+                </div>
+                <small id="lp-desc-reserve">保留 20% ($100 USDC) 應對單邊接單與對沖</small>
+              </div>
+
+              <div class="field-group">
+                <label for="lp-cfg-slots">同時做市槽位數</label>
+                <div class="input-with-unit">
+                  <input type="number" id="lp-cfg-slots" min="1" max="20" step="1" value="4" required />
+                  <span class="unit">個市場</span>
+                </div>
+                <small id="lp-desc-slots">分散於前 4 名最高獎勵效率的利基市場</small>
+              </div>
+
+              <div class="field-group">
+                <label for="lp-cfg-perslot">單槽位雙邊總額</label>
+                <div class="input-with-unit">
+                  <input type="number" id="lp-cfg-perslot" min="20" max="25000" step="10" value="100" required />
+                  <span class="unit">USDC</span>
+                </div>
+                <small id="lp-desc-perslot">每市場買單 (Bid) $50 + 賣單 (Ask) $50</small>
+              </div>
+
+              <div class="field-group">
+                <label for="lp-cfg-offset">二檔護盾掛單偏移</label>
+                <div class="input-with-unit">
+                  <span class="unit-prefix">Mid &plusmn;</span>
+                  <input type="number" id="lp-cfg-offset" min="0.2" max="4.5" step="0.1" value="1.2" required />
+                  <span class="unit">¢</span>
+                </div>
+                <small id="lp-desc-offset">掛在 Mid ± 1.2¢（兼顧平方高分與前檔肉盾）</small>
+              </div>
+
+              <div class="field-group">
+                <label for="lp-cfg-mid-min">安全中價區間 (¢)</label>
+                <div class="input-dual-inline">
+                  <div class="input-with-unit">
+                    <input type="number" id="lp-cfg-mid-min" min="5" max="49" step="1" value="25" required title="最低安全中價(¢)" />
+                    <span class="unit">¢</span>
+                  </div>
+                  <div class="input-with-unit">
+                    <input type="number" id="lp-cfg-mid-max" min="51" max="95" step="1" value="75" required title="最高安全中價(¢)" />
+                    <span class="unit">¢</span>
+                  </div>
+                </div>
+                <small id="lp-desc-mid-range">僅在中價介於 25¢ ~ 75¢ 的平衡市場掛單</small>
+              </div>
+            </div>
+          </div>
+
+          <!-- Group B: Layer 3 & 4 - Inventory Skew & Anti-Adverse Selection Kill-Switch -->
+          <div class="strategy-group-card strategy-group-hk">
+            <div class="strategy-group-header">
+              <span class="strategy-group-title">🛡️ 第三～四層：庫存偏移 &amp; 毫秒級防毒流撤單 (Kill-Switch)</span>
+              <span class="strategy-group-sub">防止被知情巨鯨或滾球比分異動吃單套牢</span>
+            </div>
+            <div class="strategy-subgrid strategy-subgrid-hk">
+              <div class="field-group">
+                <label for="lp-cfg-shield">第一檔肉盾最低深度</label>
+                <div class="input-with-unit">
+                  <input type="number" id="lp-cfg-shield" min="0" max="50000" step="25" value="150" required />
+                  <span class="unit">USDC</span>
+                </div>
+                <small id="lp-desc-shield">前檔保護深度 &lt; $150 時自動退格避險</small>
+              </div>
+
+              <div class="field-group field-group-sl-highlight">
+                <label for="lp-cfg-velocity">⚡ 瞬跳閃電撤單門檻</label>
+                <div class="input-with-unit">
+                  <span class="unit-prefix">瞬跳 &gt;</span>
+                  <input type="number" id="lp-cfg-velocity" min="0.5" max="20" step="0.5" value="2.5" required />
+                  <span class="unit">¢</span>
+                </div>
+                <small id="lp-desc-velocity">15 秒內中價跳動 &gt; 2.5¢ 立即自動撤單冷卻</small>
+              </div>
+
+              <div class="field-group">
+                <label for="lp-cfg-inventory">單盤最大淨庫存上限</label>
+                <div class="input-with-unit">
+                  <input type="number" id="lp-cfg-inventory" min="10" max="10000" step="5" value="60" required />
+                  <span class="unit">USDC</span>
+                </div>
+                <small id="lp-desc-inventory">單邊被成交達 $60 停止接刀，專注反手平倉</small>
+              </div>
+
+              <div class="field-group field-group-sl-highlight">
+                <label for="lp-cfg-cutoff">⏱️ 賽前/結算前自動清退</label>
+                <div class="input-with-unit">
+                  <span class="unit-prefix">剩餘 &le;</span>
+                  <input type="number" id="lp-cfg-cutoff" min="1" max="168" step="1" value="6" required />
+                  <span class="unit">小時</span>
+                </div>
+                <small id="lp-desc-cutoff">開賽或結算前 6 小時自動撤除所有做市單</small>
+              </div>
+            </div>
+          </div>
+        </form>
+
+        <!-- Live Dynamic LP Strategy Summary Strip -->
+        <div id="lp-strategy-live-summary" class="strategy-summary-bar">
+          📋 <strong>目前做市策略描述：</strong>以總資金 <strong>$500 USDC</strong> 切分為 <strong>4 個做市槽位</strong>（每槽位 <strong>$100</strong>：買方 $50 + 賣方 $50，預留 <strong>20% / $100</strong> 緩衝），僅挑選中價 <strong>25¢ ~ 75¢</strong>、距離結算 <strong>&gt; 6 小時</strong> 且前檔肉盾 <strong>&gt;= $150</strong> 的高獎勵盤，於 <strong>Mid &plusmn; 1.2¢</strong> 雙邊被動掛單；若中價瞬跳 <strong>&gt; 2.5¢</strong> 則毫秒級自動撤單避險。
+        </div>
+      </section>
+
+      <!-- 3. Two-Column LP Workspace: Rewards Radar Table + Active Two-Sided Quotes & Logs -->
+      <div class="workspace-grid">
+        <!-- Left Column: Polymarket Liquidity Rewards Radar Table -->
+        <div class="main-monitors-stack">
+          <section class="panel markets-panel">
+            <div class="panel-header">
+              <div class="panel-title-group">
+                <div class="brand-title-row">
+                  <h2 class="panel-title">🏆 Polymarket 流動性獎勵高效率盤口雷達表 (Quadratic Yield Radar)</h2>
+                  <span class="badge badge-success">依獎勵收益率自動排序</span>
+                  <span class="badge badge-outline">自動過濾滾球高危盤</span>
+                </div>
+                <span class="panel-hint">
+                  系統自動計算每個盤口的官方最大有效點差 (<code>rewards_max_spread</code>)、最低有效股數 (<code>rewards_min_size</code>)、二次方得分 <code>Q</code> 與投入單槽位的預估日領獎勵。
+                </span>
+              </div>
+            </div>
+
+            <div class="table-scroll">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>市場名稱 / 類別 &amp; 距離結算時間</th>
+                    <th>中價 &amp; 雙邊掛單價位 (Bid / Ask)</th>
+                    <th>官方獎勵池 &amp; 計分門檻</th>
+                    <th>前檔肉盾 &amp; 預估獎勵收益 (APR)</th>
+                    <th>四層防護判定</th>
+                    <th class="text-right">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="lp-markets-tbody">
+                  <tr>
+                    <td colspan="6" class="empty-cell">正在載入 Polymarket 流動性獎勵盤口數據...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <!-- Right Sticky Column: Active Two-Sided Quote Slots & LP Execution Logs -->
+        <aside class="side-column">
+          <section class="panel positions-panel">
+            <div class="panel-header">
+              <div class="tab-buttons" role="tablist">
+                <button type="button" class="tab-btn active" id="tab-lp-active-btn">
+                  💧 雙邊掛單中 (<span id="lp-active-badge">0</span>)
+                </button>
+                <button type="button" class="tab-btn" id="tab-lp-history-btn">
+                  📜 已撤單/清退 (<span id="lp-history-badge">0</span>)
+                </button>
+              </div>
+              <span class="badge badge-accent" id="lp-ledger-badge">🧪 模擬做市帳本</span>
+            </div>
+
+            <div id="lp-active-slots-view" class="positions-list"></div>
+            <div id="lp-history-slots-view" class="positions-list hidden"></div>
+          </section>
+
+          <section class="panel logs-panel">
+            <div class="panel-header">
+              <div class="panel-title-group">
+                <h2 class="panel-title" id="lp-logs-title">⚡ 被動做市與防毒流撤單日誌 (模擬盤)</h2>
+              </div>
+              <span class="badge badge-outline">POST_ONLY</span>
+            </div>
+            <div id="lp-logs-list" class="logs-terminal" role="log" aria-live="polite"></div>
+          </section>
+        </aside>
+      </div>
+    </div><!-- /#view-lp-dashboard -->
   </main>
 
   <!-- Native Modal 0: Admin Password Authentication for Live Trading Ledger -->
@@ -662,6 +955,6 @@
     </div>
   </dialog>
 
-  <script src="/static/app.js?v=20261120_v5" defer></script>
+  <script src="/static/app.js?v=20261121_v6" defer></script>
 </body>
 </html>

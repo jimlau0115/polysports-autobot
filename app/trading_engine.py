@@ -5,6 +5,7 @@ from typing import Any, Callable, Coroutine, Dict, List, Optional
 
 from app.database import Database, utc_now_iso
 from app.hk_temp_engine import HkTempEngine
+from app.lp_mm_engine import LpMarketMakerEngine
 from app.polymarket_client import PolymarketClient, parse_end_date_ts
 
 
@@ -13,6 +14,7 @@ class TradingEngine:
         self.db = db
         self.poly_client = poly_client
         self.hk_temp = HkTempEngine(db, poly_client)
+        self.lp_mm = LpMarketMakerEngine(db, poly_client)
         self.latest_markets: List[Dict[str, Any]] = []
         self.active_data_source: str = "INITIALIZING"
         self.last_scan_at: Optional[str] = None
@@ -136,7 +138,7 @@ class TradingEngine:
                             else m_cand["paper_rule_evaluation"]
                         )
 
-            # 4. Also scan and evaluate Hong Kong Daily Temperature 75%+ Auto-Trading
+            # 4. Also scan and evaluate Hong Kong Daily Temperature 70%+ Auto-Trading
             try:
                 await self.hk_temp.scan_and_evaluate()
             except Exception as exc:
@@ -144,6 +146,16 @@ class TradingEngine:
                     level="WARN",
                     trading_mode=trading_mode,
                     message=f"香港氣溫市場掃描異常: {exc}",
+                )
+
+            # 5. Scan and evaluate Passive Market Making & Liquidity Rewards ($500 LP Engine)
+            try:
+                await self.lp_mm.scan_and_evaluate()
+            except Exception as exc:
+                self.db.add_log(
+                    level="WARN",
+                    trading_mode=trading_mode,
+                    message=f"被動做市引擎掃描異常: {exc}",
                 )
 
             self.scan_count += 1
@@ -638,6 +650,7 @@ class TradingEngine:
                 "logs": live_logs,
             },
             "hk_temp": self.hk_temp.last_dashboard_data,
+            "lp_mm": self.lp_mm.last_dashboard_data,
         }
 
     def sanitize_state_for_client(self, state: Dict[str, Any], is_admin: bool) -> Dict[str, Any]:
@@ -688,5 +701,21 @@ class TradingEngine:
             hk_pub["summaryByMode"] = {"PAPER": paper_sum}
             hk_pub["tradesByMode"] = {"PAPER": paper_tr}
             out["hk_temp"] = hk_pub
+
+        # Strip LIVE LP quotes/summary from lp_mm
+        if state.get("lp_mm"):
+            lp_pub = dict(state["lp_mm"])
+            lp_cfg = dict(lp_pub.get("config") or {})
+            lp_cfg["mode"] = "PAPER"
+            lp_pub["config"] = lp_cfg
+            lp_pub["live"] = None
+            san_lp_markets = []
+            for m in lp_pub.get("markets") or []:
+                mc = dict(m)
+                mc["eval"] = mc.get("paper_eval") or mc.get("eval")
+                mc.pop("live_eval", None)
+                san_lp_markets.append(mc)
+            lp_pub["markets"] = san_lp_markets
+            out["lp_mm"] = lp_pub
 
         return out

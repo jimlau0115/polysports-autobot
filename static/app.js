@@ -7,6 +7,7 @@
   let onlyAbove70 = false;
   let searchQuery = "";
   let formDirty = false;
+  let lpFormDirty = false;
   let ws = null;
 
   const $ = (id) => document.getElementById(id);
@@ -392,14 +393,18 @@
       $("clob-sig-type").value = String(clob_status.signature_type ?? 1);
     }
 
-    // 5. Render HK Temperature Monitor, Sports Markets Table, Positions, Logs, and Live Strategy Descriptions
+    // 5. Render HK Temperature Monitor, Sports Markets Table, Positions, Logs, LP Module, and Live Strategy Descriptions
     if (hk_temp) {
       renderHkTempModule(hk_temp);
+    }
+    if (state.lp_mm) {
+      renderLpModule(state.lp_mm, isLiveView);
     }
     renderMarketsTable(state.markets || [], config);
     renderPositions(activeData.open_positions || [], activeData.closed_positions || [], hkTrades);
     renderLogs(activeData.logs || []);
     updateStrategyDescriptionsFromInputs();
+    updateLpDescriptionsFromInputs();
   }
 
   function updateStrategyDescriptionsFromInputs() {
@@ -1050,32 +1055,503 @@
     }
   }
 
+  function updateLpDescriptionsFromInputs() {
+    const cap = Number($("lp-cfg-capital")?.value || 500);
+    const resPct = Number($("lp-cfg-reserve")?.value ?? 20);
+    const slots = Number($("lp-cfg-slots")?.value || 4);
+    const perSlot = Number($("lp-cfg-perslot")?.value || 100);
+    const offsetStr = ($("lp-cfg-offset")?.value || "1.2").trim();
+    const midMin = Number($("lp-cfg-mid-min")?.value || 25);
+    const midMax = Number($("lp-cfg-mid-max")?.value || 75);
+    const shield = Number($("lp-cfg-shield")?.value ?? 150);
+    const velStr = ($("lp-cfg-velocity")?.value || "2.5").trim();
+    const invMax = Number($("lp-cfg-inventory")?.value || 60);
+    const cutoffHrs = Number($("lp-cfg-cutoff")?.value || 6);
+
+    const reserveUsd = Math.round(cap * (resPct / 100.0));
+    const deployableUsd = Math.max(0, cap - reserveUsd);
+    const halfSlot = Math.round(perSlot / 2);
+
+    if ($("lp-desc-capital")) {
+      $("lp-desc-capital").textContent = `總資金 $${cap.toLocaleString()}（可動用掛單 $${deployableUsd.toLocaleString()} + 緩衝 $${reserveUsd.toLocaleString()}）`;
+    }
+    if ($("lp-desc-reserve")) {
+      $("lp-desc-reserve").textContent = `保留 ${resPct}% ($${reserveUsd.toLocaleString()} USDC) 應對單邊接單與對沖`;
+    }
+    if ($("lp-desc-slots")) {
+      $("lp-desc-slots").textContent = `分散於前 ${slots} 名最高獎勵效率的利基市場`;
+    }
+    if ($("lp-desc-perslot")) {
+      $("lp-desc-perslot").textContent = `每市場買單 (Bid) $${halfSlot} + 賣單 (Ask) $${halfSlot}`;
+    }
+    if ($("lp-desc-offset")) {
+      $("lp-desc-offset").textContent = `掛在 Mid ± ${offsetStr}¢（兼顧平方高分與前檔肉盾）`;
+    }
+    if ($("lp-desc-mid-range")) {
+      $("lp-desc-mid-range").textContent = `僅在中價介於 ${midMin}¢ ~ ${midMax}¢ 的平衡市場掛單`;
+    }
+    if ($("lp-desc-shield")) {
+      $("lp-desc-shield").textContent = `前檔保護深度 < $${shield.toLocaleString()} 時自動退格避險`;
+    }
+    if ($("lp-desc-velocity")) {
+      $("lp-desc-velocity").textContent = `15 秒內中價跳動 > ${velStr}¢ 立即自動撤單冷卻`;
+    }
+    if ($("lp-desc-inventory")) {
+      $("lp-desc-inventory").textContent = `單邊被成交達 $${invMax.toLocaleString()} 停止接刀，專注反手平倉`;
+    }
+    if ($("lp-desc-cutoff")) {
+      $("lp-desc-cutoff").textContent = `開賽或結算前 ${cutoffHrs} 小時自動撤除所有做市單`;
+    }
+    if ($("lp-kpi-max-inv")) {
+      $("lp-kpi-max-inv").textContent = `$${invMax}`;
+    }
+    if ($("lp-kpi-cutoff-hrs")) {
+      $("lp-kpi-cutoff-hrs").textContent = `${cutoffHrs}h`;
+    }
+
+    if ($("lp-strategy-live-summary")) {
+      $("lp-strategy-live-summary").innerHTML =
+        `📋 <strong>目前做市策略描述：</strong>` +
+        `以總資金 <strong>$${cap.toLocaleString()} USDC</strong> 切分為 <strong>${slots} 個做市槽位</strong>` +
+        `（每槽位 <strong>$${perSlot.toLocaleString()}</strong>：買方 $${halfSlot} + 賣方 $${halfSlot}，預留 <strong>${resPct}% / $${reserveUsd.toLocaleString()}</strong> 緩衝），` +
+        `僅挑選中價 <strong>${midMin}¢ ~ ${midMax}¢</strong>、距離結算 <strong>&gt; ${cutoffHrs} 小時</strong> 且前檔肉盾 <strong>&gt;= $${shield.toLocaleString()}</strong> 的高獎勵盤，` +
+        `於 <strong>Mid &plusmn; ${escapeHtml(offsetStr)}¢</strong> 雙邊被動掛單（單盤淨庫存上限 <strong>$${invMax}</strong>）；` +
+        `若中價瞬跳 <strong>&gt; ${escapeHtml(velStr)}¢</strong> 則毫秒級自動撤單避險。`;
+    }
+  }
+
+  function renderLpModule(lp, isLiveView) {
+    const cfg = lp.config || {};
+    const modeData = (isLiveView && lp.live ? lp.live : lp.paper) || {};
+    const activeQuotes = modeData.active_quotes || [];
+    const historyQuotes = modeData.history_quotes || [];
+    const logs = modeData.logs || [];
+    const markets = lp.markets || [];
+
+    // Topbar badge
+    const navBadge = $("lp-nav-badge");
+    if (navBadge) {
+      navBadge.textContent = `${modeData.active_slots_count || 0}/${modeData.max_slots || 4} 槽位 · +$${Number(modeData.est_daily_reward_usd || 0).toFixed(2)}/日`;
+    }
+
+    // 1. LP 4-Card KPI Strip
+    if ($("lp-kpi-capital-label")) {
+      $("lp-kpi-capital-label").textContent = isLiveView
+        ? "⚡ 實盤做市總淨值 (Live LP)"
+        : `🧪 模擬做市總淨值 ($${Number(cfg.total_capital_usdc || 500).toFixed(0)} 起始)`;
+    }
+    if ($("lp-reset-paper-btn")) {
+      $("lp-reset-paper-btn").classList.toggle("hidden", isLiveView);
+    }
+    if ($("lp-kpi-equity")) $("lp-kpi-equity").textContent = fmtUsd(modeData.total_equity_usdc || 0);
+    if ($("lp-kpi-deployed")) $("lp-kpi-deployed").textContent = fmtUsd(modeData.deployed_usdc || 0);
+    if ($("lp-kpi-slots")) {
+      $("lp-kpi-slots").textContent = `${modeData.active_slots_count || 0} / ${modeData.max_slots || 4} 槽位`;
+    }
+    if ($("lp-kpi-reserve")) $("lp-kpi-reserve").textContent = fmtUsd(modeData.reserve_usdc || 0);
+
+    if ($("lp-kpi-apr-badge")) {
+      $("lp-kpi-apr-badge").textContent = `預估 APR ${Number(modeData.est_apr_pct || 0).toFixed(1)}%`;
+    }
+    if ($("lp-kpi-daily-reward")) {
+      $("lp-kpi-daily-reward").textContent = `+${fmtUsd(modeData.est_daily_reward_usd || 0)} / 日`;
+    }
+    if ($("lp-kpi-monthly-reward")) {
+      $("lp-kpi-monthly-reward").textContent = `+${fmtUsd(modeData.est_monthly_reward_usd || 0)} / 月`;
+    }
+    if ($("lp-kpi-qscore")) {
+      $("lp-kpi-qscore").textContent = `Q = ${Number(modeData.total_q_score || 0).toFixed(1)}`;
+    }
+
+    const totProfit = Number(modeData.total_net_profit_usd || 0);
+    const profEl = $("lp-kpi-total-profit");
+    if (profEl) {
+      profEl.textContent = fmtUsd(totProfit, true);
+      profEl.className = `kpi-value ${totProfit >= 0 ? "pnl-pos" : "pnl-neg"}`;
+    }
+    if ($("lp-kpi-accrued-reward")) {
+      $("lp-kpi-accrued-reward").textContent = `+$${Number(modeData.accrued_reward_usd || 0).toFixed(4)}`;
+    }
+    if ($("lp-kpi-spread-pnl")) {
+      $("lp-kpi-spread-pnl").textContent = fmtUsd(modeData.spread_pnl_usd || 0, true);
+    }
+    if ($("lp-kpi-inventory")) {
+      $("lp-kpi-inventory").textContent = fmtUsd(modeData.net_inventory_usdc || 0);
+    }
+
+    // Ledger badges
+    const lpLedgerBadge = $("lp-ledger-badge");
+    if (lpLedgerBadge) {
+      lpLedgerBadge.textContent = isLiveView ? "⚡ 實盤做市帳本" : "🧪 模擬做市帳本";
+      lpLedgerBadge.className = `badge ${isLiveView ? "badge-danger" : "badge-accent"}`;
+    }
+    if ($("lp-logs-title")) {
+      $("lp-logs-title").textContent = isLiveView
+        ? "⚡ 被動做市與防毒流撤單日誌 (實盤 LIVE)"
+        : "🧪 被動做市與防毒流撤單日誌 (模擬盤 PAPER)";
+    }
+
+    // 2. LP Strategy Toggle & Form
+    const autoBtn = $("lp-auto-toggle-btn");
+    if (autoBtn) {
+      if (cfg.auto_enabled) {
+        autoBtn.className = "btn btn-bot-active";
+        autoBtn.innerHTML = `<span>💧 自動選盤做市：運行中</span>`;
+      } else {
+        autoBtn.className = "btn btn-bot-paused";
+        autoBtn.innerHTML = `<span>⏸️ 自動選盤做市：已暫停</span>`;
+      }
+    }
+
+    if (!lpFormDirty) {
+      if ($("lp-cfg-capital")) $("lp-cfg-capital").value = cfg.total_capital_usdc ?? 500;
+      if ($("lp-cfg-reserve")) $("lp-cfg-reserve").value = cfg.reserve_ratio_pct ?? 20;
+      if ($("lp-cfg-slots")) $("lp-cfg-slots").value = cfg.max_slots ?? 4;
+      if ($("lp-cfg-perslot")) $("lp-cfg-perslot").value = cfg.per_slot_usdc ?? 100;
+      if ($("lp-cfg-offset")) $("lp-cfg-offset").value = cfg.quote_offset_cents ?? 1.2;
+      if ($("lp-cfg-mid-min")) $("lp-cfg-mid-min").value = Math.round((cfg.safe_mid_min ?? 0.25) * 100);
+      if ($("lp-cfg-mid-max")) $("lp-cfg-mid-max").value = Math.round((cfg.safe_mid_max ?? 0.75) * 100);
+      if ($("lp-cfg-shield")) $("lp-cfg-shield").value = cfg.min_shield_depth_usdc ?? 150;
+      if ($("lp-cfg-velocity")) $("lp-cfg-velocity").value = cfg.max_velocity_cents ?? 2.5;
+      if ($("lp-cfg-inventory")) $("lp-cfg-inventory").value = cfg.max_inventory_usdc ?? 60;
+      if ($("lp-cfg-cutoff")) $("lp-cfg-cutoff").value = cfg.pre_event_cutoff_hours ?? 6;
+    }
+
+    // 3. LP Rewards Radar Table
+    const tbody = $("lp-markets-tbody");
+    const perSlotVal = Number($("lp-cfg-perslot")?.value || cfg.per_slot_usdc || 100);
+    if (tbody) {
+      if (markets.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" class="empty-cell">目前尚無符合條件的流動性獎勵盤口</td></tr>`;
+      } else {
+        tbody.innerHTML = markets
+          .map((m) => {
+            const ev = (isLiveView ? m.live_eval : m.paper_eval) || m.eval || {};
+            const met = ev.metrics || {};
+            const isQuoting = ev.status_code === "ACTIVE_QUOTING";
+            const rowClass = isQuoting || ev.status_code === "ELIGIBLE_HIGH_YIELD" ? "row-qualified" : "";
+            const hrs = Number(m.hours_to_end || 0);
+            const hrsText = hrs >= 24 ? `${Math.round(hrs / 24)} 天 (${hrs.toFixed(0)}h)` : `${hrs.toFixed(1)} 小時`;
+
+            return `
+              <tr class="${rowClass}">
+                <td>
+                  <div class="market-meta">
+                    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                      <span class="sport-chip">${escapeHtml(m.category)}</span>
+                      <span class="badge badge-outline" style="font-size:11px;color:#93c5fd;">⏱️ 距結算 ${escapeHtml(hrsText)}</span>
+                    </div>
+                    <a class="market-title-link" href="${escapeHtml(m.polymarket_url || "https://polymarket.com")}" target="_blank" rel="noopener">
+                      ${escapeHtml(m.event_title)} ↗
+                    </a>
+                    <span class="market-question">${escapeHtml(m.question)}</span>
+                  </div>
+                </td>
+                <td>
+                  <div style="display:flex;flex-direction:column;gap:5px;">
+                    <div>中價 (Mid)：<strong class="mono-num">${(Number(m.midpoint) * 100).toFixed(1)}¢</strong></div>
+                    <div class="quote-band-pill">
+                      <span class="pnl-pos">Bid ${(Number(met.bid_price || 0) * 100).toFixed(1)}¢</span>
+                      <span>/</span>
+                      <span style="color:#60a5fa;">Ask ${(Number(met.ask_price || 0) * 100).toFixed(1)}¢</span>
+                    </div>
+                  </div>
+                </td>
+                <td>
+                  <div class="depth-cell">
+                    <div>日獎勵池：<strong class="pnl-pos">$${Number(m.rewards_daily_usd).toFixed(0)} / 日</strong></div>
+                    <div>有效點差 (v)：&plusmn;${Number(m.rewards_max_spread_cents).toFixed(1)}¢</div>
+                    <div>最低股數：${Number(m.rewards_min_size).toFixed(0)} 股</div>
+                  </div>
+                </td>
+                <td>
+                  <div class="depth-cell">
+                    <div>預估日領：<strong class="pnl-pos">+$${Number(met.est_daily_reward_usd || 0).toFixed(2)} / 日</strong> <span class="badge badge-success">${Number(met.est_apr_pct || 0).toFixed(0)}% APR</span></div>
+                    <div>雙邊平方分：<strong>Q = ${Number(met.q_score || 0).toFixed(1)}</strong> (佔池 ${Number(met.pool_share_pct || 0).toFixed(2)}%)</div>
+                    <div>第一檔肉盾：<strong>$${Number(m.shield_depth_usdc || 0).toLocaleString()} USDC</strong></div>
+                  </div>
+                </td>
+                <td>
+                  <div>
+                    <span class="verdict-badge verdict-${escapeHtml(ev.status_code || "SKIP_MID_RANGE")}">
+                      ${escapeHtml(ev.status_label || "評估中")}
+                    </span>
+                    <div class="verdict-reason">${escapeHtml(ev.reason || "")}</div>
+                  </div>
+                </td>
+                <td class="text-right">
+                  <button
+                    type="button"
+                    class="btn btn-xs ${isQuoting ? "btn-ghost" : "btn-bet-now"} lp-deploy-btn"
+                    data-market-id="${escapeHtml(m.market_id)}"
+                    data-event-title="${escapeHtml(m.event_title)}"
+                    ${isQuoting ? "disabled" : ""}
+                  >
+                    ${isQuoting ? "✅ 雙邊計分中" : `➕ 雙邊掛單 ($${perSlotVal})`}
+                  </button>
+                </td>
+              </tr>
+            `;
+          })
+          .join("");
+      }
+    }
+
+    // 4. Active & History LP Slots in Right Column
+    if ($("lp-active-badge")) $("lp-active-badge").textContent = activeQuotes.length;
+    if ($("lp-history-badge")) $("lp-history-badge").textContent = historyQuotes.length;
+
+    const actEl = $("lp-active-slots-view");
+    if (actEl) {
+      if (activeQuotes.length === 0) {
+        actEl.innerHTML = `<div class="empty-cell">目前尚無運行中的雙邊掛單槽位。可開啟「💧 自動選盤做市」或於左側點擊「➕ 雙邊掛單」。</div>`;
+      } else {
+        actEl.innerHTML = activeQuotes
+          .map((q) => {
+            const acc = Number(q.accrued_reward_usd || 0);
+            const spPnl = Number(q.spread_pnl_usd || 0);
+            const invUsd = Number(q.net_inventory_usdc || 0);
+            return `
+              <div class="position-card">
+                <div class="pos-top">
+                  <div>
+                    <div class="pos-title">💧 ${escapeHtml(q.event_title)}</div>
+                    <div class="pos-outcome">
+                      Bid ${(Number(q.bid_price) * 100).toFixed(1)}¢ (${Number(q.bid_size_shares).toFixed(0)}股)
+                      · Ask ${(Number(q.ask_price) * 100).toFixed(1)}¢ (${Number(q.ask_size_shares).toFixed(0)}股)
+                    </div>
+                    <div style="font-size:11px;color:#93c5fd;margin-top:2px;">🛡️ ${escapeHtml(q.last_action || "POST_ONLY 雙邊計分中")}</div>
+                  </div>
+                  <span class="badge badge-success">+$${Number(q.est_daily_reward_usd).toFixed(2)}/日</span>
+                </div>
+                <div class="pos-metrics">
+                  <div>配置資金：<strong>$${Number(q.allocated_usdc).toFixed(0)}</strong></div>
+                  <div>平方得分：<strong>Q=${Number(q.q_score).toFixed(1)}</strong></div>
+                  <div>前檔肉盾：<strong>$${Number(q.shield_depth_usdc).toFixed(0)}</strong></div>
+                  <div>已領獎勵：<strong class="pnl-pos">+$${acc.toFixed(4)}</strong></div>
+                  <div>價差損益：<strong class="${spPnl >= 0 ? "pnl-pos" : "pnl-neg"}">${fmtUsd(spPnl, true)}</strong></div>
+                  <div>淨庫存：<strong>$${invUsd.toFixed(1)}</strong></div>
+                </div>
+                <div class="pos-actions">
+                  <button type="button" class="btn btn-xs btn-outline lp-cancel-btn" data-slot-id="${q.id}">
+                    🛑 撤單並釋放槽位 ($${Number(q.allocated_usdc).toFixed(0)})
+                  </button>
+                </div>
+              </div>
+            `;
+          })
+          .join("");
+      }
+    }
+
+    const histEl = $("lp-history-slots-view");
+    if (histEl) {
+      if (historyQuotes.length === 0) {
+        histEl.innerHTML = `<div class="empty-cell">尚無已撤單或防毒流清退紀錄</div>`;
+      } else {
+        histEl.innerHTML = historyQuotes
+          .map((q) => {
+            const tot = Number(q.accrued_reward_usd || 0) + Number(q.spread_pnl_usd || 0);
+            return `
+              <div class="position-card">
+                <div class="pos-top">
+                  <div>
+                    <div class="pos-title">${escapeHtml(q.event_title)}</div>
+                    <div class="pos-outcome" style="color:#fbbf24;">狀態：${escapeHtml(q.status)} · ${escapeHtml(q.last_action)}</div>
+                  </div>
+                  <span class="badge ${tot >= 0 ? "badge-success" : "badge-danger"}">${fmtUsd(tot, true)}</span>
+                </div>
+                <div class="pos-metrics">
+                  <div>領取獎勵：+$${Number(q.accrued_reward_usd).toFixed(4)}</div>
+                  <div>價差損益：${fmtUsd(q.spread_pnl_usd, true)}</div>
+                  <div>配置：$${Number(q.allocated_usdc).toFixed(0)}</div>
+                </div>
+              </div>
+            `;
+          })
+          .join("");
+      }
+    }
+
+    // 5. LP Execution Logs
+    const lpLogEl = $("lp-logs-list");
+    if (lpLogEl) {
+      if (logs.length === 0) {
+        lpLogEl.innerHTML = `<div class="empty-cell">尚無做市日誌</div>`;
+      } else {
+        lpLogEl.innerHTML = logs
+          .map(
+            (l) => `
+              <div class="log-item log-${escapeHtml(l.level)}">
+                <span class="log-time">[${fmtTime(l.created_at)}]</span>
+                <span>${escapeHtml(l.message)}</span>
+              </div>
+            `
+          )
+          .join("");
+      }
+    }
+  }
+
   function bindEvents() {
-    // Top Layout Filter: All-in-One (Default) vs Focus HK Temp vs Focus Sports
-    $("view-all-btn")?.addEventListener("click", () => {
-      $("view-all-btn").classList.add("active");
-      $("view-hkonly-btn").classList.remove("active");
-      $("view-sportsonly-btn").classList.remove("active");
-      $("section-hktemp-monitor").classList.remove("hidden");
-      $("section-sports-monitor").classList.remove("hidden");
+    // Topbar Workspace Switcher: Directional Dual-Engine vs $500 Passive LP Market Making
+    $("nav-directional-btn")?.addEventListener("click", () => {
+      $("nav-directional-btn")?.classList.add("active");
+      $("nav-directional-btn")?.setAttribute("aria-selected", "true");
+      $("nav-lp-btn")?.classList.remove("active");
+      $("nav-lp-btn")?.setAttribute("aria-selected", "false");
+      $("view-directional-dashboard")?.classList.remove("hidden");
+      $("view-lp-dashboard")?.classList.add("hidden");
     });
 
-    $("view-hkonly-btn")?.addEventListener("click", () => {
-      $("view-hkonly-btn").classList.add("active");
-      $("view-all-btn").classList.remove("active");
-      $("view-sportsonly-btn").classList.remove("active");
-      $("section-hktemp-monitor").classList.remove("hidden");
-      $("section-sports-monitor").classList.add("hidden");
-      activatePosTab("hk");
+    $("nav-lp-btn")?.addEventListener("click", () => {
+      $("nav-lp-btn")?.classList.add("active");
+      $("nav-lp-btn")?.setAttribute("aria-selected", "true");
+      $("nav-directional-btn")?.classList.remove("active");
+      $("nav-directional-btn")?.setAttribute("aria-selected", "false");
+      $("view-lp-dashboard")?.classList.remove("hidden");
+      $("view-directional-dashboard")?.classList.add("hidden");
     });
 
-    $("view-sportsonly-btn")?.addEventListener("click", () => {
-      $("view-sportsonly-btn").classList.add("active");
-      $("view-all-btn").classList.remove("active");
-      $("view-hkonly-btn").classList.remove("active");
-      $("section-sports-monitor").classList.remove("hidden");
-      $("section-hktemp-monitor").classList.add("hidden");
-      activatePosTab("open");
+    // LP Strategy Form & Controls ($500 Passive Market Making)
+    const lpForm = $("lp-strategy-form");
+    let lpAutoSaveTimer = null;
+
+    async function saveLpConfig(silent = false) {
+      if (lpAutoSaveTimer) {
+        clearTimeout(lpAutoSaveTimer);
+        lpAutoSaveTimer = null;
+      }
+      try {
+        const payload = {
+          total_capital_usdc: Number($("lp-cfg-capital")?.value) || 500,
+          reserve_ratio_pct: Number($("lp-cfg-reserve")?.value ?? 20),
+          max_slots: Number($("lp-cfg-slots")?.value) || 4,
+          per_slot_usdc: Number($("lp-cfg-perslot")?.value) || 100,
+          quote_offset_cents: Number($("lp-cfg-offset")?.value) || 1.2,
+          safe_mid_min: (Number($("lp-cfg-mid-min")?.value) || 25) / 100.0,
+          safe_mid_max: (Number($("lp-cfg-mid-max")?.value) || 75) / 100.0,
+          min_shield_depth_usdc: Number($("lp-cfg-shield")?.value ?? 150),
+          max_velocity_cents: Number($("lp-cfg-velocity")?.value) || 2.5,
+          max_inventory_usdc: Number($("lp-cfg-inventory")?.value) || 60,
+          pre_event_cutoff_hours: Number($("lp-cfg-cutoff")?.value) || 6,
+        };
+        const res = await apiPost("/api/lp/config", payload);
+        lpFormDirty = false;
+        renderState(res.state);
+        if (!silent) {
+          showToast(`✅ 被動做市設定已生效：總資金 $${payload.total_capital_usdc} (${payload.max_slots} 槽位 × $${payload.per_slot_usdc}) · 偏移 ±${payload.quote_offset_cents}¢`);
+        }
+      } catch (err) {
+        if (!silent) {
+          showToast(`❌ 做市設定儲存失敗：${err.message}`);
+        }
+      }
+    }
+
+    function onLpInputChanged() {
+      lpFormDirty = true;
+      updateLpDescriptionsFromInputs();
+      if (lpAutoSaveTimer) clearTimeout(lpAutoSaveTimer);
+      lpAutoSaveTimer = setTimeout(() => {
+        saveLpConfig(true);
+      }, 700);
+    }
+
+    lpForm?.addEventListener("input", onLpInputChanged);
+    lpForm?.addEventListener("change", onLpInputChanged);
+
+    $("lp-save-config-btn")?.addEventListener("click", async () => {
+      await saveLpConfig(false);
+    });
+
+    $("lp-toggle-body-btn")?.addEventListener("click", () => {
+      const formEl = $("lp-strategy-form");
+      const btnEl = $("lp-toggle-body-btn");
+      if (!formEl || !btnEl) return;
+      const isHidden = formEl.classList.toggle("hidden");
+      btnEl.textContent = isHidden ? "🔽 展開參數" : "🔼 收合參數";
+    });
+
+    $("lp-auto-toggle-btn")?.addEventListener("click", async () => {
+      const curr = Boolean(appState?.lp_mm?.config?.auto_enabled);
+      try {
+        const res = await apiPost("/api/lp/config", { auto_enabled: !curr });
+        renderState(res.state);
+        showToast(!curr ? "💧 自動選盤做市已啟動！" : "⏸️ 自動選盤做市已暫停");
+      } catch (err) {
+        showToast(`❌ ${err.message}`);
+      }
+    });
+
+    $("lp-test-killswitch-btn")?.addEventListener("click", async () => {
+      try {
+        const res = await apiPost("/api/lp/simulate-killswitch");
+        renderState(res.state);
+        showToast(`⚡ 防毒流測試成功！「${res.target?.event_title}」偵測中價瞬跳 > 2.5¢，已毫秒級自動撤單並轉移槽位！`);
+      } catch (err) {
+        showToast(`❌ ${err.message}`);
+      }
+    });
+
+    $("lp-reset-paper-btn")?.addEventListener("click", async () => {
+      try {
+        const res = await apiPost("/api/lp/reset");
+        renderState(res.state);
+        showToast("🔄 已重置 $500.00 USDC 模擬被動做市帳戶與 4 個雙邊掛單槽位！");
+      } catch (err) {
+        showToast(`❌ ${err.message}`);
+      }
+    });
+
+    $("lp-markets-tbody")?.addEventListener("click", async (e) => {
+      const btn = e.target.closest(".lp-deploy-btn");
+      if (!btn) return;
+      btn.disabled = true;
+      try {
+        const res = await apiPost("/api/lp/deploy", {
+          market_id: btn.dataset.marketId,
+          mode: activeLedgerMode,
+        });
+        renderState(res.state);
+        showToast(`💧 已於「${btn.dataset.eventTitle}」建立雙邊 POST_ONLY 被動做市掛單！`);
+      } catch (err) {
+        showToast(`❌ 掛單失敗：${err.message}`);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    $("lp-active-slots-view")?.addEventListener("click", async (e) => {
+      const btn = e.target.closest(".lp-cancel-btn");
+      if (!btn) return;
+      btn.disabled = true;
+      try {
+        const res = await apiPost("/api/lp/cancel", {
+          slot_id: Number(btn.dataset.slotId),
+          mode: activeLedgerMode,
+        });
+        renderState(res.state);
+        showToast("🛑 已撤銷雙邊掛單並釋放做市槽位資金！");
+      } catch (err) {
+        showToast(`❌ 撤單失敗：${err.message}`);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    $("tab-lp-active-btn")?.addEventListener("click", () => {
+      $("tab-lp-active-btn")?.classList.add("active");
+      $("tab-lp-history-btn")?.classList.remove("active");
+      $("lp-active-slots-view")?.classList.remove("hidden");
+      $("lp-history-slots-view")?.classList.add("hidden");
+    });
+
+    $("tab-lp-history-btn")?.addEventListener("click", () => {
+      $("tab-lp-history-btn")?.classList.add("active");
+      $("tab-lp-active-btn")?.classList.remove("active");
+      $("lp-history-slots-view")?.classList.remove("hidden");
+      $("lp-active-slots-view")?.classList.add("hidden");
     });
 
     // HK Temp Sub-navigation (Today's 11 Buckets vs Weather Records Comparison)

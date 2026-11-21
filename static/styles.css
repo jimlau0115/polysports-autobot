@@ -1607,6 +1607,47 @@ html, body {
   color: #6ee7b7;
 }
 
+.dashboard-view-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.verdict-ACTIVE_QUOTING,
+.verdict-ELIGIBLE_HIGH_YIELD {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.45);
+}
+
+.verdict-SKIP_TOO_CLOSE,
+.verdict-VOLATILITY_COOLDOWN {
+  background: rgba(244, 63, 94, 0.18);
+  color: #fda4af;
+  border: 1px solid rgba(244, 63, 94, 0.42);
+}
+
+.verdict-SKIP_MID_RANGE,
+.verdict-SKIP_SHIELD_THIN,
+.verdict-SKIP_MIN_SIZE {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+
+.quote-band-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+
 
 
 

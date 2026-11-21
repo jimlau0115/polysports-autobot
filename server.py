@@ -433,6 +433,97 @@ class PolySportsServer:
         except Exception as exc:
             return web.json_response({"ok": False, "error": str(exc)}, status=400)
 
+    # --- Passive Market Making & Liquidity Rewards ($500 LP Engine) Handlers ---
+    async def handle_lp_config(self, request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "Invalid JSON"}, status=400)
+
+        if str(body.get("mode", "")).upper() == "LIVE":
+            if not self._is_admin_request(request):
+                return web.json_response(
+                    {"ok": False, "auth_required": True, "error": "🔒 切換至「實盤做市 (LIVE)」需要管理員密碼"},
+                    status=401,
+                )
+            clob_status = self.db.get_masked_clob_credentials()
+            if not clob_status.get("ready_for_live"):
+                return web.json_response(
+                    {"ok": False, "error": "切換至「實盤做市 (LIVE)」前，請先於「🔐 錢包設定」填入 Polygon 私鑰"},
+                    status=400,
+                )
+
+        cfg = self.engine.lp_mm.update_config(body)
+        await self.engine.lp_mm.scan_and_evaluate()
+        raw_state = self.engine.get_full_state()
+        await self.broadcast_ws({"type": "STATE_UPDATE", "data": raw_state})
+        return web.json_response(
+            {"ok": True, "config": cfg, "state": self._state_for_request(request, raw_state)}
+        )
+
+    async def handle_lp_deploy(self, request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+            market_id = str(body["market_id"])
+            req_mode = str(body.get("mode") or "PAPER").upper()
+            if req_mode == "LIVE" and not self._is_admin_request(request):
+                return web.json_response(
+                    {"ok": False, "auth_required": True, "error": "🔒 實盤做市需先登入實盤管理員密碼"},
+                    status=401,
+                )
+            slot = await self.engine.lp_mm.deploy_manual_slot(
+                market_id=market_id,
+                mode=req_mode if self._is_admin_request(request) else "PAPER",
+            )
+            raw_state = self.engine.get_full_state()
+            await self.broadcast_ws({"type": "STATE_UPDATE", "data": raw_state})
+            return web.json_response(
+                {"ok": True, "slot": slot, "state": self._state_for_request(request, raw_state)}
+            )
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    async def handle_lp_cancel(self, request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+            slot_id = int(body["slot_id"])
+            req_mode = str(body.get("mode") or "PAPER").upper()
+            if req_mode == "LIVE" and not self._is_admin_request(request):
+                return web.json_response(
+                    {"ok": False, "auth_required": True, "error": "🔒 實盤撤單需先登入實盤管理員密碼"},
+                    status=401,
+                )
+            cancelled = await self.engine.lp_mm.cancel_slot(
+                slot_id=slot_id,
+                mode=req_mode if self._is_admin_request(request) else "PAPER",
+            )
+            raw_state = self.engine.get_full_state()
+            await self.broadcast_ws({"type": "STATE_UPDATE", "data": raw_state})
+            return web.json_response(
+                {"ok": True, "cancelled": cancelled, "state": self._state_for_request(request, raw_state)}
+            )
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    async def handle_lp_simulate_killswitch(self, request: web.Request) -> web.Response:
+        try:
+            target = await self.engine.lp_mm.simulate_volatility_killswitch(mode="PAPER")
+            raw_state = self.engine.get_full_state()
+            await self.broadcast_ws({"type": "STATE_UPDATE", "data": raw_state})
+            return web.json_response(
+                {"ok": True, "target": target, "state": self._state_for_request(request, raw_state)}
+            )
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    async def handle_lp_reset(self, request: web.Request) -> web.Response:
+        await self.engine.lp_mm.reset_paper_lp()
+        raw_state = self.engine.get_full_state()
+        await self.broadcast_ws({"type": "STATE_UPDATE", "data": raw_state})
+        return web.json_response(
+            {"ok": True, "state": self._state_for_request(request, raw_state)}
+        )
+
     async def handle_ws(self, request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse(heartbeat=25.0)
         await ws.prepare(request)
@@ -499,6 +590,11 @@ def create_app() -> web.Application:
     app.router.add_get("/api/hk-temp/state", srv.handle_hk_temp_state)
     app.router.add_post("/api/hk-temp/config", srv.handle_hk_temp_config)
     app.router.add_post("/api/hk-temp/bet", srv.handle_hk_temp_bet)
+    app.router.add_post("/api/lp/config", srv.handle_lp_config)
+    app.router.add_post("/api/lp/deploy", srv.handle_lp_deploy)
+    app.router.add_post("/api/lp/cancel", srv.handle_lp_cancel)
+    app.router.add_post("/api/lp/simulate-killswitch", srv.handle_lp_simulate_killswitch)
+    app.router.add_post("/api/lp/reset", srv.handle_lp_reset)
     app.router.add_get("/ws", srv.handle_ws)
     app.router.add_static("/static/", path=str(STATIC_DIR), name="static")
     return app
