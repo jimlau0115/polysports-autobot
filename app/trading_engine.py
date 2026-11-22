@@ -426,8 +426,8 @@ class TradingEngine:
                     )
                 continue
 
-            # 2. Check Auto Take-Profit (In-Play)
-            if tp_enabled and matched_prob >= tp_prob:
+            # 2. Check Auto Take-Profit (In-Play: must be >= tp_prob AND strictly profitable vs entry_prob)
+            if tp_enabled and matched_prob >= tp_prob and matched_prob > float(pos.get("entry_prob", 0.70)) + 0.01:
                 closed = self.db.close_position(pos["id"], matched_prob, close_status="CLOSED_TP")
                 if closed:
                     pnl = float(closed["realized_pnl_usdc"])
