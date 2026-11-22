@@ -246,6 +246,22 @@ class LpMarketMakerEngine:
                         (json.dumps(merged), utc_now_iso()),
                     )
 
+            # One-time migration: normalize any legacy 60x-accelerated PAPER rewards & high-freq spread PnL to 1:1 real-time scale
+            cal_row = conn.execute("SELECT value FROM settings WHERE key = 'lp_realism_calibrated_v2'").fetchone()
+            if not cal_row:
+                conn.execute(
+                    """
+                    UPDATE lp_quotes
+                    SET accrued_reward_usd = ROUND(accrued_reward_usd / 140.0, 4),
+                        spread_pnl_usd = ROUND(spread_pnl_usd / 450.0, 2)
+                    WHERE trading_mode = 'PAPER'
+                    """
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
+                    ("lp_realism_calibrated_v2", "1", utc_now_iso()),
+                )
+
     def get_config(self) -> Dict[str, Any]:
         with self.db._connect() as conn:
             row = conn.execute("SELECT value FROM settings WHERE key = 'lp_mm_config'").fetchone()
@@ -370,9 +386,9 @@ class LpMarketMakerEngine:
         q_max = max(q_bid, q_ask)
         q_score = round(q_min + (q_max - q_min) / 3.0, 2) if (bid_qualifies or ask_qualifies) else 0.0
 
-        # Competitor average effective score estimation
-        comp_shares = max(200.0, competing_liquidity_usdc / 0.50)
-        comp_q_total = comp_shares * 0.28  # Average competitor quadratic efficiency ~28%
+        # Competitor average effective score estimation (realistic institutional MM competition)
+        comp_shares = max(500.0, competing_liquidity_usdc / 0.50)
+        comp_q_total = comp_shares * 0.65
         pool_share = (q_score / (comp_q_total + q_score)) if q_score > 0 else 0.0
         est_daily_usd = round(daily_reward_usd * pool_share, 2)
         est_apr_pct = round((est_daily_usd * 365.0 / max(1.0, per_slot_usdc)) * 100.0, 1)
@@ -537,9 +553,6 @@ class LpMarketMakerEngine:
 
                             liq_num = float(rm.get("liquidityNum") or rm.get("liquidity") or 25000.0)
                             vol_24h = float(rm.get("volume24hr") or 10000.0)
-                            # Realistic competing inside-spread liquidity & Top-of-Book shield depth
-                            competing_liq = round(max(2500.0, min(18000.0, liq_num * 0.12)), 0)
-                            shield_depth = round(max(85.0, min(1600.0, competing_liq * 0.095)), 0)
 
                             # Estimate daily reward pool from clobRewards or market liquidity tier
                             clob_rewards = rm.get("clobRewards") or []
@@ -549,7 +562,13 @@ class LpMarketMakerEngine:
                                     if isinstance(cr, dict):
                                         daily_reward += float(cr.get("rewardsDailyRate") or cr.get("AssetRate") or 0.0)
                             if daily_reward <= 0:
-                                daily_reward = round(max(45.0, min(320.0, (liq_num ** 0.46) * 1.15 + (vol_24h ** 0.32))), 0)
+                                daily_reward = round(max(35.0, min(180.0, (liq_num ** 0.42) * 0.85)), 0)
+                            else:
+                                daily_reward = round(min(260.0, daily_reward), 0)
+
+                            # Realistic competing inside-spread liquidity proportional to reward pool & liquidity
+                            competing_liq = round(max(6500.0, daily_reward * 85.0, min(65000.0, liq_num * 0.32)), 0)
+                            shield_depth = round(max(85.0, min(1600.0, competing_liq * 0.065)), 0)
 
                             events = rm.get("events") or []
                             ev_obj = events[0] if (isinstance(events, list) and events) else {}
@@ -820,15 +839,20 @@ class LpMarketMakerEngine:
                 inv_shares = float(q["net_inventory_shares"])
                 spread_pnl = float(q["spread_pnl_usd"])
 
-                # In PAPER mode, occasionally simulate passive fill & mean-reverting inventory unwind
-                if mode == "PAPER" and random.random() < 0.08:
+                # In PAPER mode, simulate realistic Tier-2 passive fill frequency (~1 touch every 5 hours)
+                # and two-way inventory unwind (58% maker spread capture vs 42% adverse-selection scratch loss)
+                fill_prob = min(0.02, elapsed_sec / 18000.0)
+                if mode == "PAPER" and random.random() < fill_prob:
                     if abs(inv_usdc) < min(15.0, max_inv * 0.5):
                         fill_usd = round(random.uniform(8.0, min(18.0, max_inv * 0.45)), 2)
                         direction = 1.0 if random.random() < 0.5 else -1.0
                         inv_usdc = round(inv_usdc + direction * fill_usd, 2)
                         inv_shares = round(inv_usdc / max(0.1, mid), 1)
                     else:
-                        realized_spread = round(abs(inv_usdc) * random.uniform(0.018, 0.032), 2)
+                        if random.random() < 0.58:
+                            realized_spread = round(abs(inv_usdc) * random.uniform(0.018, 0.026), 2)
+                        else:
+                            realized_spread = -round(abs(inv_usdc) * random.uniform(0.014, 0.024), 2)
                         spread_pnl = round(spread_pnl + realized_spread, 2)
                         inv_usdc = 0.0
                         inv_shares = 0.0
@@ -847,9 +871,8 @@ class LpMarketMakerEngine:
                     inventory_skew_cents=skew_cents,
                 )
 
-                # Accrue pro-rata liquidity rewards (accelerated slightly in PAPER trial run so user sees live accrual)
-                accrual_mult = 60.0 if mode == "PAPER" else 1.0
-                delta_reward = (metrics["est_daily_reward_usd"] / 86400.0) * elapsed_sec * accrual_mult
+                # Accrue 1:1 real-time pro-rata liquidity rewards (no artificial 60x time multiplier)
+                delta_reward = (metrics["est_daily_reward_usd"] / 86400.0) * elapsed_sec
                 new_accrued = round(float(q["accrued_reward_usd"]) + delta_reward, 4)
 
                 action_note = (
