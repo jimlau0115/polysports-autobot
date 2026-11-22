@@ -308,7 +308,21 @@ class TradingEngine:
         if not open_positions:
             return
 
-        market_map = {m["market_id"]: m for m in markets}
+        market_map: Dict[str, Dict[str, Any]] = {str(m["market_id"]): m for m in markets}
+
+        # Fetch any open positions' markets that are no longer in the active open list (e.g., finished/closed games)
+        missing_ids = [
+            str(pos["market_id"])
+            for pos in open_positions
+            if str(pos["market_id"]) not in market_map and not str(pos["market_id"]).startswith("sim-")
+        ]
+        if missing_ids:
+            try:
+                extra_markets = await self.poly_client.fetch_markets_by_ids(missing_ids)
+                market_map.update(extra_markets)
+            except Exception:
+                pass
+
         tp_enabled = bool(cfg.get("auto_take_profit_enabled", True))
         tp_prob = float(cfg.get("take_profit_prob", 0.96))
         sl_enabled = bool(cfg.get("auto_stop_loss_enabled", True))
@@ -316,24 +330,75 @@ class TradingEngine:
         sl_min_before_end = int(cfg.get("stop_loss_minutes_before_end", 20))
 
         for pos in open_positions:
-            m = market_map.get(pos["market_id"])
+            m = market_map.get(str(pos["market_id"]))
             if not m:
                 continue
-            # Find matching outcome probability
+
+            # Find matching outcome probability (prefer exact label match, fallback to outcome_index)
             idx = int(pos.get("outcome_index", 0))
+            target_lbl = str(pos.get("outcome_label", "")).strip().lower()
             outcomes = m.get("outcomes", [])
             matched_prob = None
             for o in outcomes:
-                if o["label"] == pos["outcome_label"] or o["index"] == idx:
+                o_lbl = str(o.get("label", "")).strip().lower()
+                o_raw = str(o.get("raw_label", "")).strip().lower()
+                if o_lbl == target_lbl or (o_raw and o_raw == target_lbl):
                     matched_prob = float(o["prob"])
                     break
             if matched_prob is None:
+                for o in outcomes:
+                    if int(o.get("index", -1)) == idx:
+                        matched_prob = float(o["prob"])
+                        break
+            if matched_prob is None:
                 continue
 
+            is_closed_on_poly = bool(m.get("closed"))
             effective_end_date = str(m.get("end_date") or pos.get("end_date") or "")
             self.db.update_open_position_mark(pos["id"], matched_prob, end_date=effective_end_date)
 
-            # Check Auto Take-Profit
+            # 1. Check Official Match Result / Settlement First (Closed on Polymarket or converged to 100c / 0c)
+            if (is_closed_on_poly and matched_prob >= 0.95) or matched_prob >= 0.995:
+                closed = self.db.close_position(pos["id"], 1.0, close_status="SETTLED_WIN")
+                if closed:
+                    pnl = float(closed["realized_pnl_usdc"])
+                    self.db.add_log(
+                        level="EXIT",
+                        trading_mode=closed["trading_mode"],
+                        sport=closed["sport"],
+                        market_id=closed["market_id"],
+                        event_title=closed["event_title"],
+                        outcome_label=closed["outcome_label"],
+                        prob=1.0,
+                        amount_usdc=float(closed["amount_usdc"]),
+                        message=(
+                            f"🏆 賽事結果出爐自動結算 (勝出 100¢)：{closed['event_title']} [{closed['outcome_label']}] "
+                            f"| 實現獲利 +${pnl:,.2f} USDC"
+                        ),
+                    )
+                continue
+
+            if (is_closed_on_poly and matched_prob <= 0.05) or matched_prob <= 0.01:
+                closed = self.db.close_position(pos["id"], 0.0, close_status="SETTLED_LOSS")
+                if closed:
+                    pnl = float(closed["realized_pnl_usdc"])
+                    self.db.add_log(
+                        level="EXIT",
+                        trading_mode=closed["trading_mode"],
+                        sport=closed["sport"],
+                        market_id=closed["market_id"],
+                        event_title=closed["event_title"],
+                        outcome_label=closed["outcome_label"],
+                        prob=0.0,
+                        amount_usdc=float(closed["amount_usdc"]),
+                        message=(
+                            f"🏳️ 賽事結果出爐自動結算 (落敗 0¢)：{closed['event_title']} [{closed['outcome_label']}] "
+                            f"| 實現損益 ${pnl:,.2f} USDC"
+                        ),
+                    )
+                continue
+
+            # 2. Check Auto Take-Profit (In-Play)
             if tp_enabled and matched_prob >= tp_prob:
                 closed = self.db.close_position(pos["id"], matched_prob, close_status="CLOSED_TP")
                 if closed:
@@ -352,7 +417,7 @@ class TradingEngine:
                             f"勝率升至 {matched_prob * 100:.1f}% (>= {tp_prob * 100:.0f}%)，實現損益 +${pnl:,.2f} USDC"
                         ),
                     )
-            # Check Auto Stop-Loss (with near-end time window prerequisite)
+            # 3. Check Auto Stop-Loss (with near-end time window prerequisite)
             elif sl_enabled and matched_prob <= sl_prob:
                 rem_min = self._minutes_until_end(effective_end_date)
                 if sl_min_before_end <= 0:

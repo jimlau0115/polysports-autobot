@@ -1,3 +1,4 @@
+import asyncio
 import json
 import math
 import random
@@ -675,6 +676,71 @@ class PolymarketClient:
             "top_outcome": top_outcome,
             "source": "LIVE_GAMMA_API",
         }
+
+    async def fetch_markets_by_ids(self, market_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """
+        Fetch current market state (including closed/resolved status and final outcomePrices)
+        for specific market IDs held in open positions.
+        """
+        clean_ids = [str(mid).strip() for mid in set(market_ids) if mid and not str(mid).startswith("sim-")]
+        if not clean_ids:
+            return {}
+
+        timeout = aiohttp.ClientTimeout(total=8.0)
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "PolySports-70Bot/1.0",
+        }
+        out: Dict[str, Dict[str, Any]] = {}
+        sem = asyncio.Semaphore(8)
+
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+            async def _fetch_one(mid: str) -> None:
+                async with sem:
+                    try:
+                        url = f"{GAMMA_API_BASE}/markets/{mid}"
+                        async with session.get(url) as resp:
+                            if resp.status != 200:
+                                return
+                            m = await resp.json()
+                            if not isinstance(m, dict):
+                                return
+                            outcomes_raw = _parse_json_list(m.get("outcomes"))
+                            prices_raw = _parse_json_list(m.get("outcomePrices"))
+                            if not outcomes_raw or not prices_raw or len(outcomes_raw) != len(prices_raw):
+                                return
+                            group_item_title = str(m.get("groupItemTitle") or "").strip()
+                            outcomes_list = []
+                            for idx, label in enumerate(outcomes_raw):
+                                try:
+                                    prob = float(prices_raw[idx])
+                                except (ValueError, TypeError):
+                                    prob = 0.0
+                                raw_label = str(label).strip()
+                                display_label = raw_label
+                                if raw_label.lower() == "yes" and group_item_title and group_item_title.lower() not in ("yes", "no"):
+                                    display_label = f"Yes ({group_item_title})"
+                                outcomes_list.append(
+                                    {
+                                        "index": idx,
+                                        "label": display_label,
+                                        "raw_label": raw_label,
+                                        "prob": round(prob, 4),
+                                    }
+                                )
+                            out[str(m.get("id") or mid)] = {
+                                "market_id": str(m.get("id") or mid),
+                                "closed": bool(m.get("closed")),
+                                "active": bool(m.get("active", True)),
+                                "accepting_orders": bool(m.get("acceptingOrders", True)),
+                                "end_date": str(m.get("endDate") or ""),
+                                "outcomes": outcomes_list,
+                            }
+                    except Exception:
+                        return
+
+            await asyncio.gather(*(_fetch_one(mid) for mid in clean_ids))
+        return out
 
     async def verify_clob_credentials(self, creds: Dict[str, Any]) -> Dict[str, Any]:
         """Verify Polymarket CLOB configuration and test connectivity."""
