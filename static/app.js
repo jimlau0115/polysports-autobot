@@ -1067,6 +1067,7 @@
     const velStr = ($("lp-cfg-velocity")?.value || "2.5").trim();
     const invMax = Number($("lp-cfg-inventory")?.value || 60);
     const cutoffHrs = Number($("lp-cfg-cutoff")?.value || 6);
+    const cooldownSec = Number($("lp-cfg-cooldown")?.value || 120);
 
     const reserveUsd = Math.round(cap * (resPct / 100.0));
     const deployableUsd = Math.max(0, cap - reserveUsd);
@@ -1087,20 +1088,26 @@
     if ($("lp-desc-offset")) {
       $("lp-desc-offset").textContent = `掛在 Mid ± ${offsetStr}¢（兼顧平方高分與前檔肉盾）`;
     }
-    if ($("lp-desc-mid-range")) {
-      $("lp-desc-mid-range").textContent = `僅在中價介於 ${midMin}¢ ~ ${midMax}¢ 的平衡市場掛單`;
+    if ($("lp-desc-mid-min")) {
+      $("lp-desc-mid-min").textContent = `低於 ${midMin}¢ 的極端冷門盤自動撤單禁入`;
+    }
+    if ($("lp-desc-mid-max")) {
+      $("lp-desc-mid-max").textContent = `高於 ${midMax}¢ 的極端尾盤自動撤單禁入`;
     }
     if ($("lp-desc-shield")) {
-      $("lp-desc-shield").textContent = `前檔保護深度 < $${shield.toLocaleString()} 時自動退格避險`;
+      $("lp-desc-shield").textContent = `前檔保護深度 < $${shield.toLocaleString()} 時自動撤單避險`;
     }
     if ($("lp-desc-velocity")) {
-      $("lp-desc-velocity").textContent = `15 秒內中價跳動 > ${velStr}¢ 立即自動撤單冷卻`;
+      $("lp-desc-velocity").textContent = `15 秒內中價跳動 > ${velStr}¢ 立即自動撤單`;
     }
     if ($("lp-desc-inventory")) {
       $("lp-desc-inventory").textContent = `單邊被成交達 $${invMax.toLocaleString()} 停止接刀，專注反手平倉`;
     }
     if ($("lp-desc-cutoff")) {
       $("lp-desc-cutoff").textContent = `開賽或結算前 ${cutoffHrs} 小時自動撤除所有做市單`;
+    }
+    if ($("lp-desc-cooldown")) {
+      $("lp-desc-cooldown").textContent = `觸發閃電撤單後暫停報價 ${cooldownSec} 秒`;
     }
     if ($("lp-kpi-max-inv")) {
       $("lp-kpi-max-inv").textContent = `$${invMax}`;
@@ -1109,6 +1116,11 @@
       $("lp-kpi-cutoff-hrs").textContent = `${cutoffHrs}h`;
     }
 
+    // Immediately update deploy button labels in LP Radar Table
+    document.querySelectorAll(".lp-deploy-btn:not([disabled])").forEach((btn) => {
+      btn.textContent = `➕ 雙邊掛單 ($${perSlot})`;
+    });
+
     if ($("lp-strategy-live-summary")) {
       $("lp-strategy-live-summary").innerHTML =
         `📋 <strong>目前做市策略描述：</strong>` +
@@ -1116,7 +1128,7 @@
         `（每槽位 <strong>$${perSlot.toLocaleString()}</strong>：買方 $${halfSlot} + 賣方 $${halfSlot}，預留 <strong>${resPct}% / $${reserveUsd.toLocaleString()}</strong> 緩衝），` +
         `僅挑選中價 <strong>${midMin}¢ ~ ${midMax}¢</strong>、距離結算 <strong>&gt; ${cutoffHrs} 小時</strong> 且前檔肉盾 <strong>&gt;= $${shield.toLocaleString()}</strong> 的高獎勵盤，` +
         `於 <strong>Mid &plusmn; ${escapeHtml(offsetStr)}¢</strong> 雙邊被動掛單（單盤淨庫存上限 <strong>$${invMax}</strong>）；` +
-        `若中價瞬跳 <strong>&gt; ${escapeHtml(velStr)}¢</strong> 則毫秒級自動撤單避險。`;
+        `若中價瞬跳 <strong>&gt; ${escapeHtml(velStr)}¢</strong> 則毫秒級自動撤單並冷卻 <strong>${cooldownSec}s</strong>。`;
     }
   }
 
@@ -1215,6 +1227,7 @@
       if ($("lp-cfg-velocity")) $("lp-cfg-velocity").value = cfg.max_velocity_cents ?? 2.5;
       if ($("lp-cfg-inventory")) $("lp-cfg-inventory").value = cfg.max_inventory_usdc ?? 60;
       if ($("lp-cfg-cutoff")) $("lp-cfg-cutoff").value = cfg.pre_event_cutoff_hours ?? 6;
+      if ($("lp-cfg-cooldown")) $("lp-cfg-cooldown").value = cfg.cooldown_seconds ?? 120;
     }
 
     // 3. LP Rewards Radar Table
@@ -1435,6 +1448,7 @@
           max_velocity_cents: Number($("lp-cfg-velocity")?.value) || 2.5,
           max_inventory_usdc: Number($("lp-cfg-inventory")?.value) || 60,
           pre_event_cutoff_hours: Number($("lp-cfg-cutoff")?.value) || 6,
+          cooldown_seconds: Number($("lp-cfg-cooldown")?.value) || 120,
         };
         const res = await apiPost("/api/lp/config", payload);
         lpFormDirty = false;
@@ -1486,9 +1500,10 @@
 
     $("lp-test-killswitch-btn")?.addEventListener("click", async () => {
       try {
-        const res = await apiPost("/api/lp/simulate-killswitch");
+        const res = await apiPost("/api/lp/simulate-killswitch", { mode: activeLedgerMode });
         renderState(res.state);
-        showToast(`⚡ 防毒流測試成功！「${res.target?.event_title}」偵測中價瞬跳 > 2.5¢，已毫秒級自動撤單並轉移槽位！`);
+        const velThresh = res.state?.lp_mm?.config?.max_velocity_cents ?? 2.5;
+        showToast(`⚡ 防毒流測試成功！「${res.target?.event_title}」偵測中價瞬跳 > ${velThresh}¢，已毫秒級自動撤單並轉移槽位！`);
       } catch (err) {
         showToast(`❌ ${err.message}`);
       }

@@ -1404,8 +1404,13 @@ html, body {
   padding: 14px 16px;
 }
 
+.lp-strategy-groups-wrapper {
+  grid-template-columns: 1fr 1fr;
+}
+
 @media (max-width: 1280px) {
-  .strategy-groups-wrapper {
+  .strategy-groups-wrapper,
+  .lp-strategy-groups-wrapper {
     grid-template-columns: 1fr;
   }
 }

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark" />
   <title>PolyQuant 雙引擎量化終端 | Polymarket 運動賽事、香港氣溫 &amp; 被動做市流動性獎勵</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261121_v6" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261122_v7" />
 </head>
 <body>
   <!-- =================================================================== -->
@@ -602,7 +602,7 @@
           </div>
         </div>
 
-        <form id="lp-strategy-form" class="strategy-groups-wrapper">
+        <form id="lp-strategy-form" class="strategy-groups-wrapper lp-strategy-groups-wrapper">
           <!-- Group A: Layer 1 & 2 - Capital Allocation & Quadratic Two-Sided Quoting -->
           <div class="strategy-group-card">
             <div class="strategy-group-header">
@@ -657,36 +657,50 @@
               </div>
 
               <div class="field-group">
-                <label for="lp-cfg-mid-min">安全中價區間 (¢)</label>
-                <div class="input-dual-inline">
-                  <div class="input-with-unit">
-                    <input type="number" id="lp-cfg-mid-min" min="5" max="49" step="1" value="25" required title="最低安全中價(¢)" />
-                    <span class="unit">¢</span>
-                  </div>
-                  <div class="input-with-unit">
-                    <input type="number" id="lp-cfg-mid-max" min="51" max="95" step="1" value="75" required title="最高安全中價(¢)" />
-                    <span class="unit">¢</span>
-                  </div>
+                <label for="lp-cfg-inventory">單盤最大淨庫存上限</label>
+                <div class="input-with-unit">
+                  <input type="number" id="lp-cfg-inventory" min="10" max="10000" step="5" value="60" required />
+                  <span class="unit">USDC</span>
                 </div>
-                <small id="lp-desc-mid-range">僅在中價介於 25¢ ~ 75¢ 的平衡市場掛單</small>
+                <small id="lp-desc-inventory">單邊被成交達 $60 停止接刀，專注反手平倉</small>
               </div>
             </div>
           </div>
 
-          <!-- Group B: Layer 3 & 4 - Inventory Skew & Anti-Adverse Selection Kill-Switch -->
+          <!-- Group B: Layer 3 & 4 - Safe Midpoint Guard & Anti-Adverse Selection Kill-Switch -->
           <div class="strategy-group-card strategy-group-hk">
             <div class="strategy-group-header">
-              <span class="strategy-group-title">🛡️ 第三～四層：庫存偏移 &amp; 毫秒級防毒流撤單 (Kill-Switch)</span>
+              <span class="strategy-group-title">🛡️ 第三～四層：安全中價過濾 &amp; 毫秒級防毒流撤單 (Kill-Switch)</span>
               <span class="strategy-group-sub">防止被知情巨鯨或滾球比分異動吃單套牢</span>
             </div>
-            <div class="strategy-subgrid strategy-subgrid-hk">
+            <div class="strategy-subgrid strategy-subgrid-sports">
+              <div class="field-group">
+                <label for="lp-cfg-mid-min">最低安全中價門檻</label>
+                <div class="input-with-unit">
+                  <span class="unit-prefix">中價 &ge;</span>
+                  <input type="number" id="lp-cfg-mid-min" min="5" max="49" step="1" value="25" required title="最低安全中價(¢)" />
+                  <span class="unit">¢</span>
+                </div>
+                <small id="lp-desc-mid-min">低於 25¢ 的極端冷門盤不掛單</small>
+              </div>
+
+              <div class="field-group">
+                <label for="lp-cfg-mid-max">最高安全中價門檻</label>
+                <div class="input-with-unit">
+                  <span class="unit-prefix">中價 &le;</span>
+                  <input type="number" id="lp-cfg-mid-max" min="51" max="95" step="1" value="75" required title="最高安全中價(¢)" />
+                  <span class="unit">¢</span>
+                </div>
+                <small id="lp-desc-mid-max">高於 75¢ 的極端尾盤自動撤單</small>
+              </div>
+
               <div class="field-group">
                 <label for="lp-cfg-shield">第一檔肉盾最低深度</label>
                 <div class="input-with-unit">
                   <input type="number" id="lp-cfg-shield" min="0" max="50000" step="25" value="150" required />
                   <span class="unit">USDC</span>
                 </div>
-                <small id="lp-desc-shield">前檔保護深度 &lt; $150 時自動退格避險</small>
+                <small id="lp-desc-shield">前檔保護深度 &lt; $150 時自動撤單避險</small>
               </div>
 
               <div class="field-group field-group-sl-highlight">
@@ -696,16 +710,7 @@
                   <input type="number" id="lp-cfg-velocity" min="0.5" max="20" step="0.5" value="2.5" required />
                   <span class="unit">¢</span>
                 </div>
-                <small id="lp-desc-velocity">15 秒內中價跳動 &gt; 2.5¢ 立即自動撤單冷卻</small>
-              </div>
-
-              <div class="field-group">
-                <label for="lp-cfg-inventory">單盤最大淨庫存上限</label>
-                <div class="input-with-unit">
-                  <input type="number" id="lp-cfg-inventory" min="10" max="10000" step="5" value="60" required />
-                  <span class="unit">USDC</span>
-                </div>
-                <small id="lp-desc-inventory">單邊被成交達 $60 停止接刀，專注反手平倉</small>
+                <small id="lp-desc-velocity">15 秒內中價跳動 &gt; 2.5¢ 立即自動撤單</small>
               </div>
 
               <div class="field-group field-group-sl-highlight">
@@ -716,6 +721,15 @@
                   <span class="unit">小時</span>
                 </div>
                 <small id="lp-desc-cutoff">開賽或結算前 6 小時自動撤除所有做市單</small>
+              </div>
+
+              <div class="field-group field-group-sl-highlight">
+                <label for="lp-cfg-cooldown">🧊 撤單後防毒流冷卻</label>
+                <div class="input-with-unit">
+                  <input type="number" id="lp-cfg-cooldown" min="15" max="3600" step="15" value="120" required />
+                  <span class="unit">秒</span>
+                </div>
+                <small id="lp-desc-cooldown">觸發閃電撤單後暫停報價 120 秒</small>
               </div>
             </div>
           </div>
@@ -955,6 +969,6 @@
     </div>
   </dialog>
 
-  <script src="/static/app.js?v=20261121_v6" defer></script>
+  <script src="/static/app.js?v=20261122_v7" defer></script>
 </body>
 </html>

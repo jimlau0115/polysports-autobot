@@ -507,7 +507,13 @@ class PolySportsServer:
 
     async def handle_lp_simulate_killswitch(self, request: web.Request) -> web.Response:
         try:
-            target = await self.engine.lp_mm.simulate_volatility_killswitch(mode="PAPER")
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            req_mode = str(body.get("mode") or "PAPER").upper()
+            target_mode = req_mode if (req_mode == "LIVE" and self._is_admin_request(request)) else "PAPER"
+            target = await self.engine.lp_mm.simulate_volatility_killswitch(mode=target_mode)
             raw_state = self.engine.get_full_state()
             await self.broadcast_ws({"type": "STATE_UPDATE", "data": raw_state})
             return web.json_response(

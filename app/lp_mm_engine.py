@@ -25,6 +25,7 @@ DEFAULT_LP_CONFIG: Dict[str, Any] = {
     "max_velocity_cents": 2.5,         # Kill-switch if midpoint jumps > 2.5c in 15s
     "max_inventory_usdc": 60.0,        # Max net single-side inventory per market ($60)
     "pre_event_cutoff_hours": 6,       # Exit all quotes 6 hours before game/event settlement
+    "cooldown_seconds": 120,           # Cooldown seconds after a volatility kill-switch
 }
 
 
@@ -43,7 +44,7 @@ CURATED_REWARD_MARKETS: List[Dict[str, Any]] = [
         "shield_depth_usdc": 640.0,
         "competing_liquidity_usdc": 6800.0,
         "hours_to_end": 720.0,
-        "polymarket_url": "https://polymarket.com/sports",
+        "polymarket_url": "https://polymarket.com/sports/nba",
     },
     {
         "market_id": "lp-ucl-winner-arsenal",
@@ -59,7 +60,7 @@ CURATED_REWARD_MARKETS: List[Dict[str, Any]] = [
         "shield_depth_usdc": 520.0,
         "competing_liquidity_usdc": 5100.0,
         "hours_to_end": 540.0,
-        "polymarket_url": "https://polymarket.com/sports",
+        "polymarket_url": "https://polymarket.com/sports/soccer",
     },
     {
         "market_id": "lp-fed-rate-cut-next-fomc",
@@ -75,7 +76,7 @@ CURATED_REWARD_MARKETS: List[Dict[str, Any]] = [
         "shield_depth_usdc": 890.0,
         "competing_liquidity_usdc": 8500.0,
         "hours_to_end": 360.0,
-        "polymarket_url": "https://polymarket.com",
+        "polymarket_url": "https://polymarket.com/predictions/fed-rates",
     },
     {
         "market_id": "lp-epl-top4-newcastle",
@@ -91,7 +92,7 @@ CURATED_REWARD_MARKETS: List[Dict[str, Any]] = [
         "shield_depth_usdc": 410.0,
         "competing_liquidity_usdc": 3900.0,
         "hours_to_end": 680.0,
-        "polymarket_url": "https://polymarket.com/sports",
+        "polymarket_url": "https://polymarket.com/sports/epl",
     },
     {
         "market_id": "lp-nba-mvp-sga",
@@ -107,7 +108,7 @@ CURATED_REWARD_MARKETS: List[Dict[str, Any]] = [
         "shield_depth_usdc": 580.0,
         "competing_liquidity_usdc": 6200.0,
         "hours_to_end": 900.0,
-        "polymarket_url": "https://polymarket.com/sports",
+        "polymarket_url": "https://polymarket.com/sports/nba",
     },
     {
         "market_id": "lp-f1-constructors-mclaren",
@@ -139,7 +140,7 @@ CURATED_REWARD_MARKETS: List[Dict[str, Any]] = [
         "shield_depth_usdc": 95.0,
         "competing_liquidity_usdc": 4200.0,
         "hours_to_end": 1.2,
-        "polymarket_url": "https://polymarket.com/sports",
+        "polymarket_url": "https://polymarket.com/sports/soccer",
     },
     {
         "market_id": "lp-extreme-tail-92c",
@@ -155,7 +156,7 @@ CURATED_REWARD_MARKETS: List[Dict[str, Any]] = [
         "shield_depth_usdc": 920.0,
         "competing_liquidity_usdc": 12000.0,
         "hours_to_end": 600.0,
-        "polymarket_url": "https://polymarket.com/sports",
+        "polymarket_url": "https://polymarket.com/sports/nba",
     },
 ]
 
@@ -171,8 +172,12 @@ class LpMarketMakerEngine:
         self.poly_client = poly_client
         self._init_tables()
         self._prev_midpoints: Dict[str, float] = {}
+        self._forced_velocity_spike: Dict[str, float] = {}
         self._cooldown_until: Dict[str, float] = {}
         self._last_reward_tick: float = time.time()
+        self._live_gamma_cache: List[Dict[str, Any]] = []
+        self._live_gamma_fetched_at: float = 0.0
+        self._latest_markets: List[Dict[str, Any]] = list(CURATED_REWARD_MARKETS)
         self.last_dashboard_data: Dict[str, Any] = {}
 
     def _init_tables(self) -> None:
@@ -276,6 +281,8 @@ class LpMarketMakerEngine:
             cfg["max_inventory_usdc"] = max(10.0, min(10000.0, float(partial["max_inventory_usdc"])))
         if "pre_event_cutoff_hours" in partial:
             cfg["pre_event_cutoff_hours"] = max(1, min(168, int(partial["pre_event_cutoff_hours"])))
+        if "cooldown_seconds" in partial:
+            cfg["cooldown_seconds"] = max(15, min(3600, int(partial["cooldown_seconds"])))
 
         with self.db._connect() as conn:
             conn.execute(
@@ -478,31 +485,175 @@ class LpMarketMakerEngine:
             "metrics": metrics,
         }
 
+    async def _fetch_live_reward_markets(self) -> List[Dict[str, Any]]:
+        """
+        Fetch live Polymarket markets with active liquidity reward parameters
+        (rewardsMinSize > 0 and rewardsMaxSpread > 0) from Gamma API.
+        Cached for 45 seconds to keep scans fast.
+        """
+        now_ts = time.time()
+        if self._live_gamma_cache and (now_ts - self._live_gamma_fetched_at) < 45.0:
+            return self._live_gamma_cache
+
+        url = f"{GAMMA_API_BASE}/markets?active=true&closed=false&limit=120&order=volume24hr&ascending=false"
+        live_list: List[Dict[str, Any]] = []
+        now_utc = datetime.now(timezone.utc)
+
+        try:
+            timeout = aiohttp.ClientTimeout(total=8)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url) as resp:
+                    if resp.status == 200:
+                        raw_markets = await resp.json()
+                        for rm in raw_markets:
+                            r_min = float(rm.get("rewardsMinSize") or 0.0)
+                            r_spread = float(rm.get("rewardsMaxSpread") or 0.0)
+                            if r_min <= 0 or r_spread <= 0:
+                                continue
+
+                            raw_prices = rm.get("outcomePrices")
+                            try:
+                                prices = json.loads(raw_prices) if isinstance(raw_prices, str) else (raw_prices or [])
+                                mid = float(prices[0]) if prices else 0.0
+                            except Exception:
+                                mid = 0.0
+
+                            if mid < 0.08 or mid > 0.94:
+                                continue
+
+                            end_str = rm.get("endDate") or rm.get("endDateIso") or ""
+                            hours_to_end = 168.0
+                            if end_str:
+                                try:
+                                    dt = datetime.fromisoformat(str(end_str).replace("Z", "+00:00"))
+                                    if dt.tzinfo is None:
+                                        dt = dt.replace(tzinfo=timezone.utc)
+                                    hours_to_end = round((dt - now_utc).total_seconds() / 3600.0, 1)
+                                except Exception:
+                                    hours_to_end = 168.0
+
+                            if hours_to_end < 0.2:
+                                continue
+
+                            liq_num = float(rm.get("liquidityNum") or rm.get("liquidity") or 25000.0)
+                            vol_24h = float(rm.get("volume24hr") or 10000.0)
+                            # Realistic competing inside-spread liquidity & Top-of-Book shield depth
+                            competing_liq = round(max(2500.0, min(18000.0, liq_num * 0.12)), 0)
+                            shield_depth = round(max(85.0, min(1600.0, competing_liq * 0.095)), 0)
+
+                            # Estimate daily reward pool from clobRewards or market liquidity tier
+                            clob_rewards = rm.get("clobRewards") or []
+                            daily_reward = 0.0
+                            if isinstance(clob_rewards, list) and clob_rewards:
+                                for cr in clob_rewards:
+                                    if isinstance(cr, dict):
+                                        daily_reward += float(cr.get("rewardsDailyRate") or cr.get("AssetRate") or 0.0)
+                            if daily_reward <= 0:
+                                daily_reward = round(max(45.0, min(320.0, (liq_num ** 0.46) * 1.15 + (vol_24h ** 0.32))), 0)
+
+                            events = rm.get("events") or []
+                            ev_obj = events[0] if (isinstance(events, list) and events) else {}
+                            ev_slug = ev_obj.get("slug") or rm.get("slug") or ""
+                            ev_title = ev_obj.get("title") or rm.get("groupItemTitle") or rm.get("question") or "Polymarket 獎勵盤"
+                            q_text = rm.get("question") or ev_title
+                            if ev_title != q_text and len(q_text) < 75:
+                                display_title = f"{ev_title} · {q_text}"
+                            else:
+                                display_title = q_text
+
+                            slug_low = (ev_slug + " " + q_text).lower()
+                            if any(k in slug_low for k in ("nba", "basketball", "celtics", "lakers", "thunder")):
+                                cat = "🏀 NBA 實時獎勵盤"
+                            elif any(k in slug_low for k in ("ucl", "epl", "fc ", "vs.", "soccer", "liga", "cup")):
+                                cat = "⚽ 體育實時獎勵盤"
+                            elif any(k in slug_low for k in ("fed", "rate", "inflation", "gdp", "cpi", "tariff")):
+                                cat = "🏦 宏觀利率獎勵盤"
+                            elif any(k in slug_low for k in ("bitcoin", "btc", "eth", "sol", "crypto")):
+                                cat = "🪙 加密宏觀獎勵盤"
+                            else:
+                                cat = "🌐 Polymarket 熱門獎勵盤"
+
+                            poly_url = f"https://polymarket.com/event/{ev_slug}" if ev_slug else "https://polymarket.com"
+
+                            live_list.append(
+                                {
+                                    "market_id": f"gamma-{rm.get('id')}",
+                                    "condition_id": str(rm.get("conditionId") or ""),
+                                    "market_slug": str(ev_slug),
+                                    "event_title": display_title[:85],
+                                    "question": q_text,
+                                    "category": cat,
+                                    "midpoint": round(mid, 3),
+                                    "rewards_daily_usd": daily_reward,
+                                    "rewards_max_spread_cents": round(r_spread, 1),
+                                    "rewards_min_size": round(r_min, 0),
+                                    "shield_depth_usdc": shield_depth,
+                                    "competing_liquidity_usdc": competing_liq,
+                                    "hours_to_end": hours_to_end,
+                                    "polymarket_url": poly_url,
+                                }
+                            )
+                        if live_list:
+                            # Keep top 8 balanced/interesting live markets
+                            live_list.sort(
+                                key=lambda x: (
+                                    0 if (0.22 <= x["midpoint"] <= 0.78 and x["hours_to_end"] > 6) else 1,
+                                    -x["rewards_daily_usd"],
+                                )
+                            )
+                            self._live_gamma_cache = live_list[:8]
+                            self._live_gamma_fetched_at = now_ts
+        except Exception:
+            pass
+
+        return self._live_gamma_cache
+
     async def scan_and_evaluate(self) -> Dict[str, Any]:
         cfg = self.get_config()
         now_ts = time.time()
         elapsed_sec = max(1.0, min(30.0, now_ts - self._last_reward_tick))
         self._last_reward_tick = now_ts
 
-        # Build live-jittered market feed from curated + live data
+        live_gamma_markets = await self._fetch_live_reward_markets()
+        combined_base = list(CURATED_REWARD_MARKETS) + live_gamma_markets
+
+        # Build live-jittered market feed from curated + live Gamma API data
         markets: List[Dict[str, Any]] = []
-        for base_m in CURATED_REWARD_MARKETS:
+        seen_ids = set()
+        for base_m in combined_base:
+            mid_id = base_m["market_id"]
+            if mid_id in seen_ids:
+                continue
+            seen_ids.add(mid_id)
+
             m = dict(base_m)
-            mid_prev = self._prev_midpoints.get(m["market_id"], m["midpoint"])
-            # Gentle realistic micro-drift for normal markets
-            if m["market_id"] != "lp-inplay-live-match-danger":
-                drift = random.uniform(-0.003, 0.003)
-                new_mid = max(0.08, min(0.94, round(m["midpoint"] + drift, 3)))
+            mid_prev = self._prev_midpoints.get(mid_id, float(m["midpoint"]))
+
+            # Check if a forced volatility spike test was triggered on this market
+            forced_spike = self._forced_velocity_spike.pop(mid_id, None)
+            if forced_spike is not None:
+                direction = -1.0 if mid_prev > 0.40 else 1.0
+                new_mid = max(0.08, min(0.94, round(mid_prev + direction * (forced_spike / 100.0), 3)))
+                m["velocity_cents"] = round(forced_spike, 2)
             else:
-                new_mid = m["midpoint"]
-            m["velocity_cents"] = round(abs(new_mid - mid_prev) * 100.0, 2)
-            self._prev_midpoints[m["market_id"]] = new_mid
+                if mid_id != "lp-inplay-live-match-danger":
+                    drift = random.uniform(-0.002, 0.002)
+                    # Mean-revert gently toward base midpoint so it doesn't random-walk out of bounds
+                    reversion = (float(base_m["midpoint"]) - mid_prev) * 0.25
+                    new_mid = max(0.08, min(0.94, round(mid_prev + drift + reversion, 3)))
+                else:
+                    new_mid = float(m["midpoint"])
+                m["velocity_cents"] = round(abs(new_mid - mid_prev) * 100.0, 2)
+
+            self._prev_midpoints[mid_id] = new_mid
             m["midpoint"] = new_mid
             m["shield_depth_usdc"] = max(
                 40.0,
-                round(base_m["shield_depth_usdc"] * random.uniform(0.92, 1.08), 0),
+                round(float(base_m["shield_depth_usdc"]) * random.uniform(0.94, 1.06), 0),
             )
             markets.append(m)
+
+        self._latest_markets = markets
 
         # Update active quotes for both PAPER and LIVE modes
         for mode in ("PAPER", "LIVE"):
@@ -512,6 +663,9 @@ class LpMarketMakerEngine:
         active_mode = str(cfg.get("mode", "PAPER")).upper()
         if cfg.get("auto_enabled", True):
             self._auto_fill_slots(markets, cfg, active_mode)
+            if active_mode != "PAPER":
+                # Keep PAPER trial run slots populated as well
+                self._auto_fill_slots(markets, cfg, "PAPER")
 
         # Build dashboard payload with separated PAPER and LIVE summaries
         paper_active = self.get_quotes(trading_mode="PAPER", status="ACTIVE")
@@ -561,13 +715,34 @@ class LpMarketMakerEngine:
         cutoff_hrs = float(cfg.get("pre_event_cutoff_hours", 6))
         max_inv = float(cfg.get("max_inventory_usdc", 60.0))
         base_offset = float(cfg.get("quote_offset_cents", 1.2))
+        safe_min = float(cfg.get("safe_mid_min", 0.25))
+        safe_max = float(cfg.get("safe_mid_max", 0.75))
+        per_slot_cfg = float(cfg.get("per_slot_usdc", 100.0))
+        max_slots = int(cfg.get("max_slots", 4))
+        total_cap = float(cfg.get("total_capital_usdc", 500.0))
+        reserve_pct = float(cfg.get("reserve_ratio_pct", 20.0))
+        deployable_cap = total_cap * (1.0 - reserve_pct / 100.0)
+        cooldown_sec = float(cfg.get("cooldown_seconds", 120))
 
         pending_logs: List[tuple] = []
+        surviving_quotes: List[Dict[str, Any]] = []
+
         with self.db._connect() as conn:
             for q in active_quotes:
                 m = mkt_map.get(q["market_id"])
                 if not m:
-                    continue
+                    # Fallback if a live market rotated out of top volume list
+                    m = {
+                        "market_id": q["market_id"],
+                        "midpoint": float(q["midpoint"]),
+                        "velocity_cents": 0.0,
+                        "shield_depth_usdc": float(q["shield_depth_usdc"]),
+                        "hours_to_end": max(0.0, float(q["hours_to_end"]) - elapsed_sec / 3600.0),
+                        "rewards_max_spread_cents": float(q["rewards_max_spread_cents"]),
+                        "rewards_min_size": float(q["rewards_min_size"]),
+                        "rewards_daily_usd": float(q["rewards_daily_usd"]),
+                        "competing_liquidity_usdc": 5500.0,
+                    }
 
                 vel = float(m.get("velocity_cents", 0.0))
                 shield = float(m.get("shield_depth_usdc", 500.0))
@@ -584,7 +759,7 @@ class LpMarketMakerEngine:
                         (
                             "WARN",
                             mode,
-                            f"🛑 [賽前清退保護] {q['event_title']} 距離結算僅剩 {hrs:.1f}h，已自動撤除雙邊掛單。",
+                            f"🛑 [賽前清退保護] {q['event_title']} 距離結算僅剩 {hrs:.1f}h (<= {cutoff_hrs:.0f}h)，已自動撤除雙邊掛單。",
                             q["event_title"],
                         )
                     )
@@ -592,47 +767,78 @@ class LpMarketMakerEngine:
 
                 # 2. Layer 4 Kill-Switch: Price Velocity Spike
                 if vel > max_vel:
-                    self._cooldown_until[q["market_id"]] = time.time() + 120.0
+                    self._cooldown_until[q["market_id"]] = time.time() + cooldown_sec
                     conn.execute(
                         "UPDATE lp_quotes SET status = 'PAUSED_VOLATILITY', last_action = ?, updated_at = ? WHERE id = ?",
-                        (f"偵測中價瞬跳 {vel:.1f}¢ > {max_vel:.1f}¢，已閃電撤單", utc_now_iso(), q["id"]),
+                        (f"偵測中價瞬跳 {vel:.1f}¢ > {max_vel:.1f}¢，已閃電撤單 ({int(cooldown_sec)}s 冷卻)", utc_now_iso(), q["id"]),
                     )
                     pending_logs.append(
                         (
                             "WARN",
                             mode,
-                            f"⚡ [防毒流閃電撤單] {q['event_title']} 盤口瞬跳 {vel:.1f}¢ (> {max_vel:.1f}¢)，毫秒級撤銷雙邊掛單避險！",
+                            f"⚡ [防毒流閃電撤單] {q['event_title']} 盤口瞬跳 {vel:.1f}¢ (> {max_vel:.1f}¢)，毫秒級撤銷雙邊掛單並冷卻 {int(cooldown_sec)}s！",
                             q["event_title"],
                         )
                     )
                     continue
 
-                # 3. Layer 3 Inventory Skew & Shield Protection
+                # 3. Layer 2 Guard: Midpoint drifted outside [safe_mid_min, safe_mid_max]
+                if mid < safe_min or mid > safe_max:
+                    conn.execute(
+                        "UPDATE lp_quotes SET status = 'STOPPED_MID_RANGE', last_action = ?, updated_at = ? WHERE id = ?",
+                        (f"中價 {mid*100:.0f}¢ 超出安全區 [{safe_min*100:.0f}¢~{safe_max*100:.0f}¢] 自動撤單", utc_now_iso(), q["id"]),
+                    )
+                    pending_logs.append(
+                        (
+                            "WARN",
+                            mode,
+                            f"⚠️ [中價越界清退] {q['event_title']} 中價 {mid*100:.1f}¢ 超出設定安全區間 [{safe_min*100:.0f}¢~{safe_max*100:.0f}¢]，已自動撤單釋放槽位。",
+                            q["event_title"],
+                        )
+                    )
+                    continue
+
+                # 4. Layer 4 Guard: Front-of-book Shield Depth depleted below threshold
+                if shield < min_shield:
+                    conn.execute(
+                        "UPDATE lp_quotes SET status = 'STOPPED_SHIELD_THIN', last_action = ?, updated_at = ? WHERE id = ?",
+                        (f"前檔肉盾 ${shield:.0f} < 門檻 ${min_shield:.0f} 自動撤單避險", utc_now_iso(), q["id"]),
+                    )
+                    pending_logs.append(
+                        (
+                            "WARN",
+                            mode,
+                            f"🛡️ [肉盾不足清退] {q['event_title']} 第一檔保護深度僅 ${shield:,.0f} (< ${min_shield:,.0f})，已自動撤單避開知情大單。",
+                            q["event_title"],
+                        )
+                    )
+                    continue
+
+                # 5. Layer 3 Inventory Skew & Dynamic Per-Slot Capital Sync
+                slot_alloc = per_slot_cfg
                 inv_usdc = float(q["net_inventory_usdc"])
                 inv_shares = float(q["net_inventory_shares"])
                 spread_pnl = float(q["spread_pnl_usd"])
 
                 # In PAPER mode, occasionally simulate passive fill & mean-reverting inventory unwind
                 if mode == "PAPER" and random.random() < 0.08:
-                    if abs(inv_usdc) < 15.0:
-                        fill_usd = round(random.uniform(8.0, 18.0), 2)
+                    if abs(inv_usdc) < min(15.0, max_inv * 0.5):
+                        fill_usd = round(random.uniform(8.0, min(18.0, max_inv * 0.45)), 2)
                         direction = 1.0 if random.random() < 0.5 else -1.0
                         inv_usdc = round(inv_usdc + direction * fill_usd, 2)
                         inv_shares = round(inv_usdc / max(0.1, mid), 1)
                     else:
-                        # Unwind inventory with maker spread profit!
                         realized_spread = round(abs(inv_usdc) * random.uniform(0.018, 0.032), 2)
                         spread_pnl = round(spread_pnl + realized_spread, 2)
                         inv_usdc = 0.0
                         inv_shares = 0.0
 
-                # Skew quotes if holding inventory or if shield is thin
                 skew_cents = round((inv_usdc / max(10.0, max_inv)) * 0.8, 2)
-                effective_offset = base_offset + (0.5 if shield < min_shield * 1.15 else 0.0)
+                effective_offset = base_offset + (0.3 if shield < min_shield * 1.15 else 0.0)
 
                 metrics = self.compute_quadratic_reward_metrics(
                     midpoint=mid,
-                    per_slot_usdc=float(q["allocated_usdc"]),
+                    per_slot_usdc=slot_alloc,
                     offset_cents=effective_offset,
                     max_spread_cents=float(m["rewards_max_spread_cents"]),
                     min_size_shares=float(m["rewards_min_size"]),
@@ -655,7 +861,7 @@ class LpMarketMakerEngine:
                 conn.execute(
                     """
                     UPDATE lp_quotes
-                    SET midpoint = ?, bid_price = ?, ask_price = ?,
+                    SET allocated_usdc = ?, midpoint = ?, bid_price = ?, ask_price = ?,
                         bid_size_shares = ?, ask_size_shares = ?,
                         q_score = ?, est_daily_reward_usd = ?,
                         accrued_reward_usd = ?, spread_pnl_usd = ?,
@@ -665,6 +871,7 @@ class LpMarketMakerEngine:
                     WHERE id = ?
                     """,
                     (
+                        slot_alloc,
                         mid,
                         metrics["bid_price"],
                         metrics["ask_price"],
@@ -683,6 +890,32 @@ class LpMarketMakerEngine:
                         q["id"],
                     ),
                 )
+                q_updated = dict(q)
+                q_updated["allocated_usdc"] = slot_alloc
+                q_updated["est_daily_reward_usd"] = metrics["est_daily_reward_usd"]
+                surviving_quotes.append(q_updated)
+
+            # 6. Layer 1 Re-balance: Prune lowest-yielding slots if max_slots or deployable_cap was reduced
+            if surviving_quotes:
+                surviving_quotes.sort(key=lambda x: float(x.get("est_daily_reward_usd", 0.0)), reverse=True)
+                kept_deployed = 0.0
+                for idx, sq in enumerate(surviving_quotes):
+                    alloc = float(sq["allocated_usdc"])
+                    if idx >= max_slots or (kept_deployed + alloc) > deployable_cap + 0.01:
+                        conn.execute(
+                            "UPDATE lp_quotes SET status = 'STOPPED_REBALANCE', net_inventory_shares = 0, net_inventory_usdc = 0, last_action = ?, updated_at = ? WHERE id = ?",
+                            ("策略槽位/資金上限調降，自動撤單重平衡", utc_now_iso(), sq["id"]),
+                        )
+                        pending_logs.append(
+                            (
+                                "INFO",
+                                mode,
+                                f"🔄 [參數重平衡] 已自動釋放超額槽位：{sq['event_title']} (保留最高收益前 {max_slots} 槽位，上限 ${deployable_cap:.0f})。",
+                                sq["event_title"],
+                            )
+                        )
+                    else:
+                        kept_deployed += alloc
 
         for lvl, m_mode, msg, ev_title in pending_logs:
             self.add_lp_log(lvl, m_mode, msg, ev_title)
@@ -807,11 +1040,29 @@ class LpMarketMakerEngine:
             if not clob.get("ready_for_live"):
                 raise ValueError("實盤做市需先於右上角「🔐 錢包設定」綁定 Polygon 私鑰")
 
-        base_m = next((m for m in CURATED_REWARD_MARKETS if m["market_id"] == market_id), None)
+        pool = list(self._latest_markets) + list(CURATED_REWARD_MARKETS)
+        base_m = next((m for m in pool if m["market_id"] == market_id), None)
         if not base_m:
-            raise ValueError("找不到指定的做市盤口")
+            raise ValueError("找不到指定的做市盤口，請重新掃描後再試")
+
+        active_quotes = self.get_quotes(trading_mode=target_mode, status="ACTIVE")
+        if any(q["market_id"] == market_id for q in active_quotes):
+            raise ValueError("此盤口已經在雙邊掛單做市中")
 
         per_slot = float(cfg.get("per_slot_usdc", 100.0))
+        total_cap = float(cfg.get("total_capital_usdc", 500.0))
+        currently_deployed = sum(float(q["allocated_usdc"]) for q in active_quotes)
+
+        if currently_deployed + per_slot > total_cap + 0.01:
+            raise ValueError(
+                f"可用做市資金不足（已部署 ${currently_deployed:.0f} + 單槽位 ${per_slot:.0f} > 總資金池 ${total_cap:.0f}），請先釋放現有槽位或調高做市總資金池"
+            )
+
+        # If manual deploy exceeds max_slots, automatically bump max_slots to accommodate the user's explicit manual action
+        max_slots = int(cfg.get("max_slots", 4))
+        if len(active_quotes) >= max_slots:
+            self.update_config({"max_slots": len(active_quotes) + 1})
+
         metrics = self.compute_quadratic_reward_metrics(
             midpoint=float(base_m["midpoint"]),
             per_slot_usdc=per_slot,
@@ -843,20 +1094,22 @@ class LpMarketMakerEngine:
         self.add_lp_log(
             "EXIT",
             mode,
-            f"🛑 已撤銷雙邊掛單並釋放資金：{q['event_title']} (累計領取獎勵 +${float(q['accrued_reward_usd']):.2f} / 價差損益 +${float(q['spread_pnl_usd']):.2f})",
+            f"🛑 已撤銷雙邊掛單並釋放資金：{q['event_title']} (累計領取獎勵 +${float(q['accrued_reward_usd']):.4f} / 價差損益 +${float(q['spread_pnl_usd']):.2f})",
             q["event_title"],
         )
         await self.scan_and_evaluate()
         return q
 
     async def simulate_volatility_killswitch(self, mode: str = "PAPER") -> Dict[str, Any]:
-        active = self.get_quotes(trading_mode=mode, status="ACTIVE")
+        target_mode = str(mode).upper()
+        active = self.get_quotes(trading_mode=target_mode, status="ACTIVE")
         if not active:
             raise ValueError("目前沒有運行中的做市槽位可供測試")
         target = active[0]
-        # Force a 4.2c jump on this market and trigger immediate scan
-        old_mid = self._prev_midpoints.get(target["market_id"], float(target["midpoint"]))
-        self._prev_midpoints[target["market_id"]] = max(0.05, old_mid - 0.045)
+        cfg = self.get_config()
+        max_vel = float(cfg.get("max_velocity_cents", 2.5))
+        # Force a deterministic velocity spike above threshold on the target market
+        self._forced_velocity_spike[target["market_id"]] = round(max(4.2, max_vel + 2.0), 2)
         await self.scan_and_evaluate()
         return target
 
@@ -865,7 +1118,11 @@ class LpMarketMakerEngine:
             conn.execute("DELETE FROM lp_quotes WHERE trading_mode = 'PAPER'")
             conn.execute("DELETE FROM lp_logs WHERE trading_mode = 'PAPER'")
         self._cooldown_until.clear()
-        self.add_lp_log("INFO", "PAPER", "🔄 已重置 $500.00 USDC 模擬被動做市帳戶，正在重新部署 4 個高收益雙邊掛單槽位...")
+        self._forced_velocity_spike.clear()
+        cfg = self.get_config()
+        cap = float(cfg.get("total_capital_usdc", 500.0))
+        slots = int(cfg.get("max_slots", 4))
+        self.add_lp_log("INFO", "PAPER", f"🔄 已重置 ${cap:,.2f} USDC 模擬被動做市帳戶，正在重新部署 {slots} 個高收益雙邊掛單槽位...")
         await self.scan_and_evaluate()
 
     def _build_mode_summary(self, mode: str, cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -873,11 +1130,11 @@ class LpMarketMakerEngine:
         active_quotes = [q for q in all_quotes if q["status"] == "ACTIVE"]
         history_quotes = [q for q in all_quotes if q["status"] != "ACTIVE"][:20]
 
-        total_cap = float(cfg.get("total_capital_usdc", 500.0)) if mode == "PAPER" else sum(float(q["allocated_usdc"]) for q in active_quotes)
+        total_cap = float(cfg.get("total_capital_usdc", 500.0))
         deployed_usdc = round(sum(float(q["allocated_usdc"]) for q in active_quotes), 2)
         reserve_usdc = round(max(0.0, total_cap - deployed_usdc), 2)
 
-        total_accrued_rewards = round(sum(float(q["accrued_reward_usd"]) for q in all_quotes), 2)
+        total_accrued_rewards = round(sum(float(q["accrued_reward_usd"]) for q in all_quotes), 4)
         total_spread_pnl = round(sum(float(q["spread_pnl_usd"]) for q in all_quotes), 2)
         total_net_profit = round(total_accrued_rewards + total_spread_pnl, 2)
         total_equity = round(total_cap + total_net_profit, 2)
