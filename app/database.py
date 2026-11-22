@@ -171,6 +171,30 @@ class Database:
                     ("dedup_positions_by_event_v2", "true", utc_now_iso()),
                 )
 
+            # One-time migration: apply +EV strategy optimization (70%-80% entry window, 93% auto TP, 30m/55% SL, $3000 min liquidity, exclude high-upset sports)
+            ev_mig = conn.execute("SELECT value FROM settings WHERE key = 'plus_ev_strategy_upgrade_v1'").fetchone()
+            if not ev_mig:
+                cfg_r = conn.execute("SELECT value FROM settings WHERE key = 'bot_config'").fetchone()
+                if cfg_r:
+                    cfg_obj = json.loads(cfg_r["value"])
+                    cfg_obj["min_win_prob"] = 0.70
+                    cfg_obj["max_win_prob"] = 0.80
+                    cfg_obj["min_liquidity_usdc"] = 3000.0
+                    cfg_obj["auto_take_profit_enabled"] = True
+                    cfg_obj["take_profit_prob"] = 0.93
+                    cfg_obj["auto_stop_loss_enabled"] = True
+                    cfg_obj["stop_loss_minutes_before_end"] = 30
+                    cfg_obj["stop_loss_prob"] = 0.55
+                    cfg_obj["exclude_high_upset_sports"] = True
+                    conn.execute(
+                        "UPDATE settings SET value = ?, updated_at = ? WHERE key = 'bot_config'",
+                        (json.dumps(cfg_obj), utc_now_iso()),
+                    )
+                conn.execute(
+                    "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
+                    ("plus_ev_strategy_upgrade_v1", "true", utc_now_iso()),
+                )
+
     def get_config(self) -> Dict[str, Any]:
         with self._connect() as conn:
             row = conn.execute("SELECT value FROM settings WHERE key = 'bot_config'").fetchone()
@@ -185,6 +209,7 @@ class Database:
         bool_keys = {
             "bot_enabled",
             "prevent_duplicate_market",
+            "exclude_high_upset_sports",
             "auto_take_profit_enabled",
             "auto_stop_loss_enabled",
         }

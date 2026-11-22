@@ -179,8 +179,9 @@ class TradingEngine:
         max_prob = float(cfg.get("max_win_prob", 0.95))
         min_liq = float(cfg.get("min_liquidity_usdc", 1500.0))
         min_vol = float(cfg.get("min_volume_usdc", 5000.0))
-        max_spread = float(cfg.get("max_spread", 0.05))
+        max_spread = float(cfg.get("max_spread", 0.04))
         prevent_dup = bool(cfg.get("prevent_duplicate_market", True))
+        exclude_upset = bool(cfg.get("exclude_high_upset_sports", True))
         allowed_sports_raw = str(cfg.get("allowed_sports", "ALL")).strip().upper()
         allowed_sports = (
             None
@@ -222,6 +223,33 @@ class TradingEngine:
                 "reason": f"運動類別 {sport} 不在目前篩選清單中",
                 "target_outcome": top,
             }
+
+        if exclude_upset:
+            title_low = f"{market.get('event_title', '')} {market.get('market_slug', '')}".lower()
+            is_high_upset = sport in ("TENNIS", "ESPORTS") or any(
+                kw in title_low
+                for kw in (
+                    "challenger",
+                    "playford",
+                    "yokohama",
+                    "kobe:",
+                    "sydney:",
+                    "drummondville",
+                    "counter-strike",
+                    "valorant",
+                    "dota",
+                    "itf",
+                )
+            )
+            if is_high_upset:
+                return {
+                    "eligible": False,
+                    "already_bet": already_bet,
+                    "status_code": "HIGH_UPSET_FILTERED",
+                    "status_label": "🛡️ 高爆冷賽事過濾",
+                    "reason": "已啟用 +EV 防爆冷過濾（自動跳過網球挑戰賽 / 電競等易逆轉盤口）",
+                    "target_outcome": top,
+                }
 
         if prob < min_prob:
             gap_pct = round((min_prob - prob) * 100, 1)

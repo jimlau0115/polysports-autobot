@@ -1477,11 +1477,24 @@ html, body {
   }
 }
 
+.field-group-tp-highlight {
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
 .field-group-sl-highlight {
   background: rgba(244, 63, 94, 0.07);
   border: 1px solid rgba(244, 63, 94, 0.32);
   border-radius: 8px;
   padding: 8px 10px;
+}
+
+.verdict-HIGH_UPSET_FILTERED {
+  background: rgba(245, 158, 11, 0.16);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.38);
 }
 
 .unit-prefix {

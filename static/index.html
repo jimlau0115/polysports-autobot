@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark" />
   <title>PolyQuant 雙引擎量化終端 | Polymarket 運動賽事、香港氣溫 &amp; 被動做市流動性獎勵</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261122_v7" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261122_v8" />
 </head>
 <body>
   <!-- =================================================================== -->
@@ -195,11 +195,14 @@
       </div>
 
       <form id="strategy-form" class="strategy-groups-wrapper">
-        <!-- Group A: Sports Strategy & Near-End Stop Loss -->
+        <!-- Group A: Sports Strategy & Near-End Stop Loss (+EV Optimized) -->
         <div class="strategy-group-card">
           <div class="strategy-group-header">
-            <span class="strategy-group-title">🏟️ 運動賽事自動策略 &amp; 尾盤條件式停損</span>
-            <span class="strategy-group-sub">依最快結束時間優先排序與下單 · 同項目僅投注一次</span>
+            <span class="strategy-group-title">🏟️ 運動賽事 +EV 正期望值策略 &amp; 自動止盈/停損</span>
+            <label class="checkbox-pill" style="font-size:12px;color:#6ee7b7;border-color:rgba(16,185,129,0.4);background:rgba(16,185,129,0.12);" title="自動過濾易爆冷的 ATP/ITF 網球挑戰賽與次級電競賽事">
+              <input type="checkbox" id="cfg-exclude-upset" checked />
+              <span>🛡️ 排除高爆冷賽事 (網球挑戰賽/電競)</span>
+            </label>
           </div>
           <div class="strategy-subgrid strategy-subgrid-sports">
             <div class="field-group">
@@ -212,21 +215,21 @@
             </div>
 
             <div class="field-group">
-              <label for="cfg-max-prob">最高勝率上限</label>
+              <label for="cfg-max-prob">最高勝率上限 (+EV 禁追尾盤)</label>
               <div class="input-with-unit">
-                <input type="number" id="cfg-max-prob" min="50" max="99.5" step="0.5" value="95" required />
+                <input type="number" id="cfg-max-prob" min="50" max="99.5" step="0.5" value="80" required />
                 <span class="unit">%</span>
               </div>
-              <small id="desc-max-prob">高於 95% 不追高（目標區間 70% ~ 95%）</small>
+              <small id="desc-max-prob">高於 80% 不追高（鎖定 70% ~ 80% 黃金賠率區）</small>
             </div>
 
             <div class="field-group">
               <label for="cfg-bet-amount">單筆投注金額</label>
               <div class="input-with-unit">
-                <input type="number" id="cfg-bet-amount" min="1" max="10000" step="1" value="25" required />
+                <input type="number" id="cfg-bet-amount" min="1" max="10000" step="1" value="20" required />
                 <span class="unit">USDC</span>
               </div>
-              <small id="desc-bet-amount">運動達標時，每場自動買入 $25 USDC</small>
+              <small id="desc-bet-amount">運動達標時，每場自動買入 $20 USDC</small>
             </div>
 
             <div class="field-group">
@@ -235,45 +238,46 @@
                 <input type="number" id="cfg-daily-budget" min="10" max="100000" step="10" value="300" required />
                 <span class="unit">USDC</span>
               </div>
-              <small id="desc-daily-budget">運動單日上限 $300 USDC（約可投 12 場）</small>
+              <small id="desc-daily-budget">運動單日上限 $300 USDC（約可投 15 場）</small>
             </div>
 
             <div class="field-group">
               <label for="cfg-min-liquidity">最低盤口流動性</label>
               <div class="input-with-unit">
-                <input type="number" id="cfg-min-liquidity" min="0" max="1000000" step="100" value="1500" required />
+                <input type="number" id="cfg-min-liquidity" min="0" max="1000000" step="100" value="3000" required />
                 <span class="unit">USDC</span>
               </div>
-              <small id="desc-min-liquidity">僅交易深度 &gt;= $1,500 USDC 的賽事</small>
+              <small id="desc-min-liquidity">僅交易深度 &gt;= $3,000 USDC 的主流賽事</small>
             </div>
 
             <div class="field-group">
               <label for="cfg-max-spread">最大買賣點差</label>
               <div class="input-with-unit">
-                <input type="number" id="cfg-max-spread" min="0.5" max="25" step="0.5" value="5.0" required />
+                <input type="number" id="cfg-max-spread" min="0.5" max="25" step="0.5" value="4.0" required />
                 <span class="unit">%</span>
               </div>
-              <small id="desc-max-spread">買賣價差 &gt; 5.0% 時自動跳過不買</small>
+              <small id="desc-max-spread">買賣價差 &gt; 4.0% 時自動跳過不買</small>
             </div>
 
-            <div class="field-group">
-              <label for="cfg-tp-prob">自動停利 (Take-Profit)</label>
-              <div class="input-with-unit">
+            <div class="field-group field-group-tp-highlight">
+              <label for="cfg-tp-prob">🎯 自動提前止盈 (Take-Profit)</label>
+              <div class="input-with-unit" title="當持倉勝率升至此百分比時自動獲利了結，避開比賽最後幾分鐘傷停補時逆轉">
                 <input type="checkbox" id="cfg-tp-enabled" checked title="啟用自動停利" />
-                <input type="number" id="cfg-tp-prob" min="75" max="99.5" step="0.5" value="96" />
+                <span class="unit-prefix" style="color:#6ee7b7;">升至 &ge;</span>
+                <input type="number" id="cfg-tp-prob" min="75" max="99.5" step="0.5" value="93" />
                 <span class="unit">%</span>
               </div>
-              <small id="desc-tp-prob">升至 96% 自動獲利了結</small>
+              <small id="desc-tp-prob">升至 93% 自動提前鎖利（防終場絕殺翻盤）</small>
             </div>
 
             <div class="field-group field-group-sl-highlight">
               <label for="cfg-sl-minutes">⏱️ 停損前設：距離結束時間</label>
               <div class="input-with-unit" title="僅當賽事距離結束剩餘分鐘數 <= 此值時才允許啟動自動停損 (設為 0 代表不限時間)">
                 <span class="unit-prefix">剩餘 &le;</span>
-                <input type="number" id="cfg-sl-minutes" min="0" max="1440" step="1" value="20" required />
+                <input type="number" id="cfg-sl-minutes" min="0" max="1440" step="1" value="30" required />
                 <span class="unit">分鐘</span>
               </div>
-              <small id="desc-sl-minutes">賽事結束前 20 分鐘內才允許停損</small>
+              <small id="desc-sl-minutes">賽事結束前 30 分鐘內才允許停損</small>
             </div>
 
             <div class="field-group field-group-sl-highlight">
@@ -281,10 +285,10 @@
               <div class="input-with-unit" title="當進入尾盤時間窗口且勝率跌至此百分比或以下時，自動停損平倉">
                 <input type="checkbox" id="cfg-sl-enabled" checked title="啟用自動停損" />
                 <span class="unit-prefix">跌至 &le;</span>
-                <input type="number" id="cfg-sl-prob" min="5" max="69" step="1" value="52" required />
+                <input type="number" id="cfg-sl-prob" min="5" max="69" step="1" value="55" required />
                 <span class="unit">%</span>
               </div>
-              <small id="desc-sl-prob">剩餘 &lt;= 20 分且勝率 &lt;= 52% 自動停損</small>
+              <small id="desc-sl-prob">剩餘 &lt;= 30 分且勝率 &lt;= 55% 自動停損</small>
             </div>
           </div>
         </div>
@@ -969,6 +973,6 @@
     </div>
   </dialog>
 
-  <script src="/static/app.js?v=20261122_v7" defer></script>
+  <script src="/static/app.js?v=20261122_v8" defer></script>
 </body>
 </html>

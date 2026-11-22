@@ -369,7 +369,10 @@
       $("cfg-tp-prob").value = (config.take_profit_prob * 100).toFixed(1).replace(/\.0$/, "");
       $("cfg-sl-enabled").checked = Boolean(config.auto_stop_loss_enabled);
       if ($("cfg-sl-minutes")) {
-        $("cfg-sl-minutes").value = config.stop_loss_minutes_before_end ?? 20;
+        $("cfg-sl-minutes").value = config.stop_loss_minutes_before_end ?? 30;
+      }
+      if ($("cfg-exclude-upset")) {
+        $("cfg-exclude-upset").checked = config.exclude_high_upset_sports !== false;
       }
       $("cfg-sl-prob").value = (config.stop_loss_prob * 100).toFixed(1).replace(/\.0$/, "");
       $("cfg-scan-interval").value = config.scan_interval_sec;
@@ -409,16 +412,17 @@
 
   function updateStrategyDescriptionsFromInputs() {
     const minProbStr = ($("cfg-min-prob")?.value || "70").trim();
-    const maxProbStr = ($("cfg-max-prob")?.value || "95").trim();
-    const betAmt = Number($("cfg-bet-amount")?.value || 25);
+    const maxProbStr = ($("cfg-max-prob")?.value || "80").trim();
+    const betAmt = Number($("cfg-bet-amount")?.value || 20);
     const dailyBudget = Number($("cfg-daily-budget")?.value || 300);
-    const minLiq = Number($("cfg-min-liquidity")?.value || 1500);
-    const maxSpreadStr = ($("cfg-max-spread")?.value || "5.0").trim();
+    const minLiq = Number($("cfg-min-liquidity")?.value || 3000);
+    const maxSpreadStr = ($("cfg-max-spread")?.value || "4.0").trim();
     const tpEnabled = Boolean($("cfg-tp-enabled")?.checked);
-    const tpProbStr = ($("cfg-tp-prob")?.value || "96").trim();
+    const tpProbStr = ($("cfg-tp-prob")?.value || "93").trim();
     const slEnabled = Boolean($("cfg-sl-enabled")?.checked);
-    const slMinutes = Number($("cfg-sl-minutes")?.value ?? 20);
-    const slProbStr = ($("cfg-sl-prob")?.value || "52").trim();
+    const slMinutes = Number($("cfg-sl-minutes")?.value ?? 30);
+    const slProbStr = ($("cfg-sl-prob")?.value || "55").trim();
+    const excludeUpset = $("cfg-exclude-upset") ? Boolean($("cfg-exclude-upset").checked) : true;
 
     const hkPriceMinStr = ($("hk-pricemin-input")?.value || "70").trim();
     const hkStake = Number($("hk-stake-input")?.value || 10);
@@ -440,7 +444,7 @@
       $("desc-min-prob").textContent = `當運動選項勝率 >= ${minProbStr}% 時立即觸發買入`;
     }
     if ($("desc-max-prob")) {
-      $("desc-max-prob").textContent = `高於 ${maxProbStr}% 不追高（目標區間 ${minProbStr}% ~ ${maxProbStr}%）`;
+      $("desc-max-prob").textContent = `高於 ${maxProbStr}% 不追高（鎖定 ${minProbStr}% ~ ${maxProbStr}% +EV 黃金賠率區）`;
     }
     if ($("desc-bet-amount")) {
       $("desc-bet-amount").textContent = `運動達標時，每場自動買入 $${betAmt.toLocaleString()} USDC`;
@@ -449,14 +453,14 @@
       $("desc-daily-budget").textContent = `運動單日上限 $${dailyBudget.toLocaleString()} USDC（約可投 ${maxBetsPerDay} 場）`;
     }
     if ($("desc-min-liquidity")) {
-      $("desc-min-liquidity").textContent = `僅交易深度 >= $${minLiq.toLocaleString()} USDC 的賽事`;
+      $("desc-min-liquidity").textContent = `僅交易深度 >= $${minLiq.toLocaleString()} USDC 的主流賽事`;
     }
     if ($("desc-max-spread")) {
       $("desc-max-spread").textContent = `買賣價差 > ${maxSpreadStr}% 時自動跳過不買`;
     }
     if ($("desc-tp-prob")) {
       $("desc-tp-prob").textContent = tpEnabled
-        ? `升至 ${tpProbStr}% 自動獲利了結`
+        ? `升至 ${tpProbStr}% 自動提前鎖利（防終場絕殺翻盤）`
         : "自動停利已關閉（持有至結算或手動平倉）";
     }
     if ($("desc-sl-minutes")) {
@@ -492,18 +496,19 @@
       $("strategy-panel-hint").textContent = `運動 ${minProbStr}%~${maxProbStr}% ($${betAmt}) · 氣溫 ${hkPriceMinStr}%+ ($${hkStake})`;
     }
     if ($("strategy-live-summary")) {
-      const tpText = tpEnabled ? `升至 ${tpProbStr}% 停利` : "停利關閉";
+      const tpText = tpEnabled ? `升至 ${tpProbStr}% 提前止盈鎖利` : "停利關閉";
+      const upsetText = excludeUpset ? "、已排除網球挑戰賽/電競高爆冷盤" : "";
       const slSummary = !slEnabled
         ? "停損關閉"
         : slMinutes > 0
         ? `剩餘 <= ${slMinutes} 分鐘且勝率 <= ${slProbStr}% 自動停損`
         : `勝率 <= ${slProbStr}% 自動停損`;
       $("strategy-live-summary").innerHTML =
-        `📋 <strong>目前生效策略：</strong>` +
-        `【🏟️ 運動賽事】勝率介於 <strong>${escapeHtml(minProbStr)}% ~ ${escapeHtml(maxProbStr)}%</strong>` +
-        `（深度 &gt;= <strong>$${minLiq.toLocaleString()}</strong>、點差 &lt;= <strong>${escapeHtml(maxSpreadStr)}%</strong>）時，` +
-        `依最快結束優先買入 <strong>$${betAmt.toLocaleString()} USDC</strong>` +
-        `（單日上限 <strong>$${dailyBudget.toLocaleString()}</strong>，${escapeHtml(tpText)} / <strong>${escapeHtml(slSummary)}</strong>）；` +
+        `📋 <strong>目前生效 +EV 策略：</strong>` +
+        `【🏟️ 運動賽事】僅買入勝率介於 <strong>${escapeHtml(minProbStr)}% ~ ${escapeHtml(maxProbStr)}%</strong> 黃金賠率區` +
+        `（深度 &gt;= <strong>$${minLiq.toLocaleString()}</strong>、點差 &lt;= <strong>${escapeHtml(maxSpreadStr)}%</strong>${upsetText}），` +
+        `每場投入 <strong>$${betAmt.toLocaleString()} USDC</strong>` +
+        `（單日上限 <strong>$${dailyBudget.toLocaleString()}</strong>，<strong>${escapeHtml(tpText)}</strong> / <strong>${escapeHtml(slSummary)}</strong>）；` +
         `【🌡️ 香港氣溫】於 <strong>${escapeHtml(hkGateStr)} HKT</strong> 後達 <strong>${escapeHtml(hkPriceMinStr)}%+</strong> 自動買入 <strong>$${hkStake.toLocaleString()} USDC</strong>` +
         `（每 <strong>${scanSec} 秒</strong> 掃描，上限 <strong>${maxPos} 倉</strong>）。`;
     }
@@ -1638,10 +1643,11 @@
           min_liquidity_usdc: Number($("cfg-min-liquidity").value) || 0,
           max_spread: (Number($("cfg-max-spread").value) || 5.0) / 100.0,
           auto_take_profit_enabled: $("cfg-tp-enabled").checked,
-          take_profit_prob: (Number($("cfg-tp-prob").value) || 96) / 100.0,
+          take_profit_prob: (Number($("cfg-tp-prob").value) || 93) / 100.0,
           auto_stop_loss_enabled: $("cfg-sl-enabled").checked,
-          stop_loss_minutes_before_end: Math.max(0, Number($("cfg-sl-minutes")?.value ?? 20)),
-          stop_loss_prob: (Number($("cfg-sl-prob").value) || 52) / 100.0,
+          stop_loss_minutes_before_end: Math.max(0, Number($("cfg-sl-minutes")?.value ?? 30)),
+          stop_loss_prob: (Number($("cfg-sl-prob").value) || 55) / 100.0,
+          exclude_high_upset_sports: $("cfg-exclude-upset") ? Boolean($("cfg-exclude-upset").checked) : true,
           scan_interval_sec: Number($("cfg-scan-interval").value) || 5,
           max_open_positions: Number($("cfg-max-positions").value) || 15,
         };
@@ -1672,8 +1678,8 @@
         const previewConfig = {
           ...appState.config,
           min_win_prob: (Number($("cfg-min-prob")?.value) || 70) / 100.0,
-          max_win_prob: (Number($("cfg-max-prob")?.value) || 95) / 100.0,
-          bet_amount_usdc: Number($("cfg-bet-amount")?.value) || 25,
+          max_win_prob: (Number($("cfg-max-prob")?.value) || 80) / 100.0,
+          bet_amount_usdc: Number($("cfg-bet-amount")?.value) || 20,
         };
         renderMarketsTable(appState.markets || [], previewConfig);
       }

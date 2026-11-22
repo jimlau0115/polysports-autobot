@@ -21,23 +21,24 @@ DEFAULT_BOT_CONFIG = {
     "data_source_mode": os.getenv("DATA_SOURCE_MODE", "AUTO"),  # "AUTO", "LIVE_API", "SIMULATION"
     "scan_interval_sec": int(os.getenv("SCAN_INTERVAL_SEC", "5")),
 
-    # Core 70%+ Win-Probability Rule & Risk Controls
+    # Core 70%+ Win-Probability Rule & Risk Controls (+EV Optimized)
     "min_win_prob": float(os.getenv("MIN_WIN_PROB", "0.70")),       # 70% minimum probability trigger
-    "max_win_prob": float(os.getenv("MAX_WIN_PROB", "0.95")),       # 95% max cap to avoid zero-ROI 99c markets
-    "bet_amount_usdc": float(os.getenv("BET_AMOUNT_USDC", "25.0")), # Fixed USDC per trade
-    "min_liquidity_usdc": float(os.getenv("MIN_LIQUIDITY_USDC", "1500.0")),
+    "max_win_prob": float(os.getenv("MAX_WIN_PROB", "0.80")),       # 80% max cap (+EV golden zone 70c-80c, avoid >82c tail traps)
+    "bet_amount_usdc": float(os.getenv("BET_AMOUNT_USDC", "20.0")), # Fixed USDC per trade
+    "min_liquidity_usdc": float(os.getenv("MIN_LIQUIDITY_USDC", "3000.0")),
     "min_volume_usdc": float(os.getenv("MIN_VOLUME_USDC", "5000.0")),
-    "max_spread": float(os.getenv("MAX_SPREAD", "0.05")),           # Max 5% bid-ask spread
+    "max_spread": float(os.getenv("MAX_SPREAD", "0.04")),           # Max 4% bid-ask spread
     "prevent_duplicate_market": True,                               # One bet per game/conditionId
+    "exclude_high_upset_sports": True,                              # Filter out high-upset Tennis Challenger / Esports matches
     "daily_budget_usdc": float(os.getenv("DAILY_BUDGET_USDC", "300.0")),
     "max_open_positions": int(os.getenv("MAX_OPEN_POSITIONS", "15")),
 
     # Optional Position Exit Rules (Take-Profit / Stop-Loss)
     "auto_take_profit_enabled": True,
-    "take_profit_prob": float(os.getenv("TAKE_PROFIT_PROB", "0.96")),  # Auto-close when prob reaches 96%
+    "take_profit_prob": float(os.getenv("TAKE_PROFIT_PROB", "0.93")),  # Auto-close when prob reaches 93% to avoid late stoppage reversals
     "auto_stop_loss_enabled": True,
-    "stop_loss_prob": float(os.getenv("STOP_LOSS_PROB", "0.52")),      # Cut loss if team drops to 52%
-    "stop_loss_minutes_before_end": int(os.getenv("STOP_LOSS_MINUTES_BEFORE_END", "20")),  # Only trigger SL when <= N mins before end (0 = anytime)
+    "stop_loss_prob": float(os.getenv("STOP_LOSS_PROB", "0.55")),      # Cut loss if team drops to <= 55%
+    "stop_loss_minutes_before_end": int(os.getenv("STOP_LOSS_MINUTES_BEFORE_END", "30")),  # Only trigger SL when <= 30 mins before end
 
     # Sport Category Filter ("ALL" or comma-separated e.g. "NBA,SOCCER,NFL,MLB,NHL,TENNIS,UFC,ESPORTS")
     "allowed_sports": os.getenv("ALLOWED_SPORTS", "ALL"),
