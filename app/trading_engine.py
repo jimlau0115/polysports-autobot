@@ -5,6 +5,7 @@ from typing import Any, Callable, Coroutine, Dict, List, Optional
 
 from app.database import Database, utc_now_iso
 from app.hk_temp_engine import HkTempEngine
+from app.hkjc_engine import HkjcQuantEngine
 from app.lp_mm_engine import LpMarketMakerEngine
 from app.polymarket_client import PolymarketClient, parse_end_date_ts
 
@@ -15,6 +16,7 @@ class TradingEngine:
         self.poly_client = poly_client
         self.hk_temp = HkTempEngine(db, poly_client)
         self.lp_mm = LpMarketMakerEngine(db, poly_client)
+        self.hkjc = HkjcQuantEngine(db)
         self.latest_markets: List[Dict[str, Any]] = []
         self.active_data_source: str = "INITIALIZING"
         self.last_scan_at: Optional[str] = None
@@ -156,6 +158,16 @@ class TradingEngine:
                     level="WARN",
                     trading_mode=trading_mode,
                     message=f"被動做市引擎掃描異常: {exc}",
+                )
+
+            # 6. Check HKJC Self-Evolving Quant Engine auto-progression loop
+            try:
+                await self.hkjc.maybe_auto_progress()
+            except Exception as exc:
+                self.db.add_log(
+                    level="WARN",
+                    trading_mode=trading_mode,
+                    message=f"HKJC 賽馬自進化引擎更新異常: {exc}",
                 )
 
             self.scan_count += 1
@@ -744,6 +756,7 @@ class TradingEngine:
             },
             "hk_temp": self.hk_temp.last_dashboard_data,
             "lp_mm": self.lp_mm.last_dashboard_data,
+            "hkjc": self.hkjc.get_state(),
         }
 
     def sanitize_state_for_client(self, state: Dict[str, Any], is_admin: bool) -> Dict[str, Any]:

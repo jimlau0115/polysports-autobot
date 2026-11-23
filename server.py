@@ -530,6 +530,151 @@ class PolySportsServer:
             {"ok": True, "state": self._state_for_request(request, raw_state)}
         )
 
+    # --- HKJC Gu Minggao & Bill Benter 2.0 Self-Evolving Quant & Paper Betting Handlers ---
+    async def handle_hkjc_state(self, request: web.Request) -> web.Response:
+        return web.json_response({"ok": True, "hkjc": self.engine.hkjc.get_state()})
+
+    async def handle_hkjc_config(self, request: web.Request) -> web.Response:
+        return web.json_response(
+            {
+                "ok": False,
+                "error": "🔒 策略與風控參數已由系統鎖定保護，僅由賽後自進化引擎自動優化，禁止人為修改。",
+            },
+            status=403,
+        )
+
+    async def handle_hkjc_telegram_config(self, request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+            tg_cfg = self.engine.hkjc.update_telegram_config(body)
+            raw_state = self.engine.get_full_state()
+            await self.broadcast_ws({"type": "STATE_UPDATE", "data": raw_state})
+            return web.json_response(
+                {"ok": True, "telegram": tg_cfg, "hkjc": raw_state["hkjc"]}
+            )
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    async def handle_hkjc_telegram_push(self, request: web.Request) -> web.Response:
+        try:
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            race_id = body.get("race_id")
+            push_res = await self.engine.hkjc.push_race_strategy_to_telegram(race_id=race_id)
+            raw_state = self.engine.get_full_state()
+            await self.broadcast_ws({"type": "STATE_UPDATE", "data": raw_state})
+            return web.json_response(
+                {"ok": True, "push": push_res, "hkjc": raw_state["hkjc"]}
+            )
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    async def handle_hkjc_bet(self, request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+            race_id = str(body.get("race_id", ""))
+            pool_type = str(body.get("pool_type", "WIN"))
+            selection_key = str(body.get("selection_key", ""))
+            stake_hkd = float(body.get("stake_hkd", 200.0))
+            bet = self.engine.hkjc.place_manual_paper_bet(
+                race_id=race_id,
+                pool_type=pool_type,
+                selection_key=selection_key,
+                stake_hkd=stake_hkd,
+            )
+            raw_state = self.engine.get_full_state()
+            await self.broadcast_ws({"type": "STATE_UPDATE", "data": raw_state})
+            return web.json_response(
+                {"ok": True, "bet": bet, "hkjc": raw_state["hkjc"], "state": self._state_for_request(request, raw_state)}
+            )
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    async def handle_hkjc_auto_bet(self, request: web.Request) -> web.Response:
+        try:
+            placed = self.engine.hkjc.auto_place_paper_bets_for_open_races()
+            raw_state = self.engine.get_full_state()
+            await self.broadcast_ws({"type": "STATE_UPDATE", "data": raw_state})
+            return web.json_response(
+                {"ok": True, "placed_count": len(placed), "hkjc": raw_state["hkjc"], "state": self._state_for_request(request, raw_state)}
+            )
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    async def handle_hkjc_settle(self, request: web.Request) -> web.Response:
+        try:
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            race_id = body.get("race_id")
+            result = self.engine.hkjc.settle_race_and_evolve(race_id=race_id)
+            tg_push = await self.engine.hkjc.auto_push_after_settlement(result)
+            raw_state = self.engine.get_full_state()
+            await self.broadcast_ws({"type": "STATE_UPDATE", "data": raw_state})
+            return web.json_response(
+                {
+                    "ok": True,
+                    "result": result,
+                    "telegram_push": tg_push,
+                    "hkjc": raw_state["hkjc"],
+                    "state": self._state_for_request(request, raw_state),
+                }
+            )
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    async def handle_hkjc_settle_all(self, request: web.Request) -> web.Response:
+        try:
+            results = []
+            for r in list(self.engine.hkjc.races):
+                if r["status"] != "SETTLED":
+                    res = self.engine.hkjc.settle_race_and_evolve(race_id=r["race_id"])
+                    await self.engine.hkjc.auto_push_after_settlement(res)
+                    results.append(res)
+            raw_state = self.engine.get_full_state()
+            await self.broadcast_ws({"type": "STATE_UPDATE", "data": raw_state})
+            return web.json_response(
+                {
+                    "ok": True,
+                    "settled_count": len(results),
+                    "results": results,
+                    "hkjc": raw_state["hkjc"],
+                    "state": self._state_for_request(request, raw_state),
+                }
+            )
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    async def handle_hkjc_reset(self, request: web.Request) -> web.Response:
+        try:
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            reset_weights = bool(body.get("reset_model_weights", False))
+            self.engine.hkjc.reset_meeting(reset_model_weights=reset_weights)
+            raw_state = self.engine.get_full_state()
+            await self.broadcast_ws({"type": "STATE_UPDATE", "data": raw_state})
+            return web.json_response(
+                {"ok": True, "hkjc": raw_state["hkjc"], "state": self._state_for_request(request, raw_state)}
+            )
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    async def handle_hkjc_sync(self, request: web.Request) -> web.Response:
+        try:
+            await self.engine.hkjc.sync_live_hkjc_data(force_refresh_cards=False)
+            raw_state = self.engine.get_full_state()
+            await self.broadcast_ws({"type": "STATE_UPDATE", "data": raw_state})
+            return web.json_response(
+                {"ok": True, "hkjc": raw_state["hkjc"], "state": self._state_for_request(request, raw_state)}
+            )
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
     async def handle_ws(self, request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse(heartbeat=25.0)
         await ws.prepare(request)
@@ -580,6 +725,7 @@ def create_app() -> web.Application:
     app.on_cleanup.append(srv.on_cleanup)
 
     app.router.add_get("/", srv.handle_index)
+    app.router.add_get("/hkjc", srv.handle_index)
     app.router.add_get("/api/health", srv.handle_health)
     app.router.add_post("/api/auth/login", srv.handle_auth_login)
     app.router.add_post("/api/auth/logout", srv.handle_auth_logout)
@@ -601,6 +747,16 @@ def create_app() -> web.Application:
     app.router.add_post("/api/lp/cancel", srv.handle_lp_cancel)
     app.router.add_post("/api/lp/simulate-killswitch", srv.handle_lp_simulate_killswitch)
     app.router.add_post("/api/lp/reset", srv.handle_lp_reset)
+    app.router.add_get("/api/hkjc/state", srv.handle_hkjc_state)
+    app.router.add_post("/api/hkjc/config", srv.handle_hkjc_config)
+    app.router.add_post("/api/hkjc/bet", srv.handle_hkjc_bet)
+    app.router.add_post("/api/hkjc/auto-bet", srv.handle_hkjc_auto_bet)
+    app.router.add_post("/api/hkjc/settle", srv.handle_hkjc_settle)
+    app.router.add_post("/api/hkjc/settle-all", srv.handle_hkjc_settle_all)
+    app.router.add_post("/api/hkjc/reset", srv.handle_hkjc_reset)
+    app.router.add_post("/api/hkjc/sync", srv.handle_hkjc_sync)
+    app.router.add_post("/api/hkjc/telegram/config", srv.handle_hkjc_telegram_config)
+    app.router.add_post("/api/hkjc/telegram/push", srv.handle_hkjc_telegram_push)
     app.router.add_get("/ws", srv.handle_ws)
     app.router.add_static("/static/", path=str(STATIC_DIR), name="static")
     return app

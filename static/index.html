@@ -4,975 +4,317 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark" />
-  <title>PolyQuant 雙引擎量化終端 | Polymarket 運動賽事、香港氣溫 &amp; 被動做市流動性獎勵</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261122_v8" />
+  <title>HKJC 顧鳴高 &amp; Bill Benter 2.0 實時賽馬量化分析與自進化系統</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20261122_hkjc_v2" />
 </head>
 <body>
   <!-- =================================================================== -->
-  <!-- CLEAN SINGLE-ROW TOPBAR                                             -->
+  <!-- COMPACT SINGLE-ROW TOPBAR (< 56px, auto-hides on downward scroll)   -->
   <!-- =================================================================== -->
-  <header class="topbar">
+  <header class="topbar top-bar">
     <div class="topbar-left">
       <div class="brand-group">
-        <div class="brand-logo" aria-hidden="true">⚡</div>
+        <div class="brand-logo" aria-hidden="true">🏇</div>
         <div>
           <div class="brand-title-row">
-            <h1 class="brand-title">PolyQuant Hub</h1>
-            <span class="badge badge-accent" id="header-brand-badge">運動 70%+ · 氣溫 70%+ · $500 LP 做市</span>
+            <h1 class="brand-title">HKJC Quant 2.0</h1>
+            <span class="badge badge-accent" id="hkjc-meeting-pill">載入馬會實時賽事中...</span>
+            <span class="badge badge-success" id="hkjc-version-pill">v2.0.0</span>
           </div>
           <p class="brand-subtitle">
             香港時間 <span id="header-hkt-clock" class="mono-num">--:--:--</span>
             <span class="dot-sep">·</span>
-            <span class="inline-status" id="scanner-status-pill">
+            <span class="inline-status">
               <span class="pulse-dot" id="ws-dot"></span>
-              <span id="scanner-status-text">連線中...</span>
+              <span id="hkjc-sync-status-text">連線香港賽馬會官方數據源...</span>
             </span>
           </p>
         </div>
       </div>
-
-      <!-- Main Workspace Switcher: Directional Dual-Engine vs $500 Passive LP Market Making -->
-      <div class="module-switcher" role="tablist" aria-label="策略工作區切換">
-        <button type="button" id="nav-directional-btn" class="module-tab active" role="tab" aria-selected="true">
-          🔀 雙引擎整合總覽
-        </button>
-        <button type="button" id="nav-lp-btn" class="module-tab" role="tab" aria-selected="false">
-          💧 被動做市 / 流動性獎勵
-          <span class="badge badge-success" id="lp-nav-badge">$500 LP</span>
-        </button>
-      </div>
     </div>
 
     <div class="topbar-right">
-      <!-- Segmented Ledger & Trading Mode Switch -->
-      <div class="segmented-control" role="group" aria-label="模擬盤與實盤獨立帳本切換">
-        <button type="button" id="mode-paper-btn" class="seg-btn active" title="模擬盤：無需密碼，供策略制定與 Trial Run 測試">
-          🧪 模擬盤 (Trial Run)
-        </button>
-        <button type="button" id="mode-live-btn" class="seg-btn" title="實盤專區：需輸入管理員密碼解鎖，擁有獨立持倉、勝率、損益與日誌">
-          <span id="mode-live-lock-icon">🔒</span> 實盤專區 (Live)
-        </button>
-      </div>
-
-      <!-- Compact Data Source Select -->
-      <div class="control-inline">
-        <label for="data-source-select" class="sr-only">數據源模式</label>
-        <select id="data-source-select" class="select-compact" title="切換盤口數據來源">
-          <option value="AUTO">📡 自動數據源</option>
-          <option value="LIVE_API">🌐 官方 API</option>
-          <option value="SIMULATION">🧪 動態模擬流</option>
-        </select>
-      </div>
-
-      <!-- Compact Action Bar -->
-      <div class="action-group">
-        <button type="button" id="open-auth-modal-btn" class="btn btn-outline" title="登入實盤管理員密碼、修改密碼或登出">
-          🔒 實盤登入
-        </button>
-        <button type="button" id="open-clob-modal-btn" class="btn btn-outline" title="設定 Polymarket CLOB 錢包與 API 憑證">
-          🔐 錢包設定
-        </button>
-        <button type="button" id="manual-scan-btn" class="btn btn-ghost" title="立即重新掃描運動與香港氣溫盤口">
-          🔄 掃描
-        </button>
-        <button type="button" id="open-deploy-modal-btn" class="btn btn-ghost" title="查看 Vercel 整合與 Railway 24/7 架構說明">
-          ☁️ 架構
-        </button>
-      </div>
+      <span class="badge badge-outline" title="模型權重與凱利風控參數已由系統鎖定保護，僅由賽後自進化引擎自動調整，禁止人為修改">
+        🔒 策略參數防竄改鎖定中
+      </span>
+      <button type="button" id="hkjc-settle-next-btn" class="btn btn-primary" title="根據馬會官方派彩與賽果結算下一場賽事，並自動檢討偏差、升級模型權重及推播下一場策略至 Telegram">
+        🏁 結算下一場賽果 &amp; 自動升級
+      </button>
+      <button type="button" id="hkjc-settle-all-btn" class="btn btn-secondary" title="依序對全日所有已完賽場次進行逐場無未來函數結算與連續自進化升級">
+        ⚡ 全日逐場結算並進化
+      </button>
+      <button type="button" id="hkjc-push-tg-btn" class="btn btn-outline" title="立即將目前選中場次的完整量化分析與凱利投注策略發送至您的 Telegram">
+        📲 發送本場策略至 Telegram
+      </button>
+      <button type="button" id="open-tg-modal-btn" class="btn btn-ghost" title="設定 Telegram Bot Token 與 Chat ID，自動接收未來每一場的投注策略">
+        ✈️ Telegram 綁定
+      </button>
+      <button type="button" id="hkjc-sync-btn" class="btn btn-ghost" title="立即向香港賽馬會 GraphQL 與賽馬資訊網同步最新賠率及賽果">
+        🔄 同步
+      </button>
     </div>
   </header>
 
-  <!-- Toast Notification Banner -->
+  <!-- Toast Notification Container -->
   <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
   <!-- =================================================================== -->
-  <!-- MAIN UNIFIED DASHBOARD                                              -->
+  <!-- MAIN HKJC QUANT & SELF-EVOLVING PAPER BETTING WORKSPACE             -->
   <!-- =================================================================== -->
   <main class="dashboard-container">
-    <!-- Compact Ledger Context Strip -->
-    <div id="active-ledger-banner" class="ledger-banner ledger-banner-paper">
-      <div class="ledger-banner-left">
-        <span class="badge badge-accent" id="ledger-mode-pill">🧪 模擬盤 (Trial Run)</span>
-        <span id="ledger-mode-desc">目前顯示「模擬盤」獨立數據（供策略制定與測試，與實盤的注項、勝率及損益 100% 隔離）。</span>
-      </div>
-      <div class="ledger-banner-right">
-        <span class="badge badge-outline" id="bot-exec-mode-badge">🤖 自動下單目標：模擬盤 (PAPER)</span>
-      </div>
-    </div>
-
-    <!-- ================================================================= -->
-    <!-- VIEW 1: DIRECTIONAL DUAL-ENGINE (SPORTS 70%+ & HK TEMP 70%+)      -->
-    <!-- ================================================================= -->
-    <div id="view-directional-dashboard" class="dashboard-view-stack">
     <!-- 1. Clean 4-Card Executive KPI Strip -->
-    <section class="kpi-grid kpi-grid-4" aria-label="全系統核心指標">
-      <!-- KPI 1: Equity & Cash -->
+    <section class="kpi-grid" aria-label="核心績效與模型自進化指標">
+      <!-- KPI 1: Paper Bankroll & Reset -->
       <article class="kpi-card">
         <div class="kpi-header">
-          <span class="kpi-label" id="kpi-equity-label">🧪 模擬盤總淨值</span>
-          <button type="button" id="reset-paper-btn" class="btn-link" title="重置模擬帳戶資金與持倉">重置模擬盤</button>
-        </div>
-        <div class="kpi-value" id="kpi-equity">$1,000.00</div>
-        <div class="kpi-sub" id="kpi-equity-sub">
-          可用現金 <strong id="kpi-cash">$1,000.00</strong> · 持倉市值 <strong id="kpi-open-value">$0.00</strong>
-        </div>
-      </article>
-
-      <!-- KPI 2: PnL, ROI & Win Rate -->
-      <article class="kpi-card">
-        <div class="kpi-header">
-          <span class="kpi-label" id="kpi-pnl-label">📈 累計總損益 &amp; 勝率</span>
-          <div class="kpi-badges-inline">
-            <span class="badge" id="kpi-roi-badge">0.00%</span>
-            <span class="kpi-tag" id="kpi-winrate-tag">勝率 --%</span>
+          <span class="kpi-label">💰 模擬投注總淨值 (HKD)</span>
+          <div class="kpi-links">
+            <button type="button" id="hkjc-reset-day-btn" class="btn-link" title="重置本賽日注單並從第 1 場重新驗證，保留目前已進化的模型權重">重跑本賽日(保留模型)</button>
+            <span class="dot-sep">·</span>
+            <button type="button" id="hkjc-reset-all-btn" class="btn-link" title="完全重置注單與模型權重回初始 v2.0.0">重置回 v2.0</button>
           </div>
         </div>
-        <div class="kpi-value" id="kpi-total-pnl">$0.00</div>
+        <div class="kpi-value mono-num" id="hkjc-kpi-equity">HK$100,000</div>
         <div class="kpi-sub">
-          未實現 <span id="kpi-unrealized">$0.00</span> · 已實現 <span id="kpi-realized">$0.00</span> · 進行中 <strong id="kpi-positions-count">0 筆</strong> (<span id="kpi-sports-open-count">0</span>運動/<span id="hk-open-count">0</span>氣溫 · 投入 <strong id="kpi-invested">$0.00</strong>)
+          可用現金 <strong id="hkjc-kpi-cash" class="mono-num">HK$100,000</strong>
+          <span class="dot-sep">·</span>
+          未結算注額 <strong id="hkjc-kpi-open-stake" class="mono-num">HK$0</strong>
         </div>
       </article>
 
-      <!-- KPI 3: Sports Radar & Daily Budget -->
+      <!-- KPI 2: Net PnL, ROI & Strike Rate -->
       <article class="kpi-card">
         <div class="kpi-header">
-          <span class="kpi-label" id="kpi-sports-radar-label">🏟️ 運動賽事雷達 (&gt;= 70%)</span>
-          <span class="badge badge-success" id="kpi-source-badge">LIVE API</span>
+          <span class="kpi-label">📈 累計實戰損益 &amp; 報酬率</span>
+          <div class="kpi-links">
+            <span class="badge badge-success" id="hkjc-kpi-roi-badge">+0.00%</span>
+            <span class="kpi-tag" id="hkjc-kpi-winrate-tag">命中率 --%</span>
+          </div>
         </div>
-        <div class="kpi-value" id="kpi-markets-summary">0 / 0 場達標</div>
-        <div class="kpi-sub" id="kpi-active-rule-summary">
-          今日運動已投 <strong id="kpi-daily-spend">$0 / $300</strong>
-        </div>
-        <div class="progress-track">
-          <div class="progress-fill" id="kpi-budget-bar" style="width: 0%"></div>
+        <div class="kpi-value mono-num" id="hkjc-kpi-pnl">HK$0</div>
+        <div class="kpi-sub">
+          已結算本金 <strong id="hkjc-kpi-settled-stake" class="mono-num">HK$0</strong>
+          <span class="dot-sep">·</span>
+          注單 <strong id="hkjc-kpi-bets-summary">0 筆 (0 勝 / 0 負)</strong>
         </div>
       </article>
 
-      <!-- KPI 4: HK Observatory Temp & Auto Gate -->
+      <!-- KPI 3: Benter 2.0 vs Classical Benter 1.0 Calibration -->
+      <article class="kpi-card">
+        <div class="kpi-header">
+          <span class="kpi-label">🧬 顧鳴高/Benter 2.0 預測優勢</span>
+          <span class="badge badge-accent" id="hkjc-kpi-progress-badge">已進化 0 / 11 場</span>
+        </div>
+        <div class="kpi-value" id="hkjc-kpi-hit-summary">等待完賽對比</div>
+        <div class="kpi-sub" id="hkjc-kpi-logloss-sub">
+          對數損失 (Log-Loss)：<strong class="mono-num">-- vs --</strong>
+        </div>
+      </article>
+
+      <!-- KPI 4: Real-Time Learned Track Bias & Discounted Harville Exponents -->
       <article class="kpi-card kpi-card-highlight">
         <div class="kpi-header">
-          <span class="kpi-label" id="kpi-hk-gate-label">🌡️ 香港天文臺氣溫 &amp; 70%+ 閘門</span>
-          <span class="badge badge-success" id="hk-current-stale-badge">即時觀測</span>
+          <span class="kpi-label">🧭 當日跑道實時學習偏差 (Track Bias)</span>
+          <span class="badge badge-outline" id="hkjc-kpi-theta-badge">θ₂=0.810 · θ₃=0.710</span>
         </div>
-        <div class="kpi-value">
-          <span id="hk-current-temp">--°C</span>
-          <span class="kpi-inline-divider">/</span>
-          <span id="hk-forecast-temp" class="kpi-secondary-val">預測 --°C</span>
+        <div class="kpi-value kpi-bias-row" id="hkjc-kpi-bias-summary">
+          內外檔均勢 · 步速均勢
         </div>
-        <div class="kpi-sub">
-          日高 <strong id="hk-official-max">觀測中</strong> (<span id="hk-max-time">--:--</span>) · <span id="hk-gate-countdown">11:00 HKT 開閘</span>
+        <div class="kpi-sub" id="hkjc-kpi-bias-sub">
+          隨每場完賽自動從實際三甲檔位與沿途走位動態校準
         </div>
       </article>
     </section>
 
-    <!-- 2. Cleanly Structured Strategy & Risk Control Panel -->
-    <section class="panel strategy-panel">
-      <div class="panel-header">
-        <div class="panel-title-group">
-          <div class="brand-title-row">
-            <h2 class="panel-title" id="strategy-panel-title">🎯 雙引擎自動投注策略與風控設定</h2>
-            <span class="badge badge-outline" id="strategy-panel-hint">運動賽事 + 香港每日最高氣溫</span>
-          </div>
-        </div>
-        <div class="panel-actions">
-          <button type="button" id="bot-toggle-btn" class="btn btn-bot-active">
-            <span id="bot-toggle-icon">🏟️</span>
-            <span id="bot-toggle-label">運動 70%+ 自動：運行中</span>
-          </button>
-          <button type="button" id="hk-auto-toggle-btn" class="btn btn-bot-active">
-            <span>🌡️ 氣溫 70%+ 自動：運行中</span>
-          </button>
-          <button type="button" id="sim-breakout-btn" class="btn btn-secondary" title="在運動模擬盤口中讓一場賽事瞬間突破門檻勝率，測試機器人毫秒級自動下單">
-            📈 測試 70%+ 觸發
-          </button>
-          <button type="button" id="save-config-btn" class="btn btn-primary">
-            💾 儲存設定
-          </button>
-          <button type="button" id="toggle-strategy-body-btn" class="btn btn-ghost" title="收合或展開詳細參數表單">
-            🔼 收合參數
-          </button>
-        </div>
-      </div>
-
-      <form id="strategy-form" class="strategy-groups-wrapper">
-        <!-- Group A: Sports Strategy & Near-End Stop Loss (+EV Optimized) -->
-        <div class="strategy-group-card">
-          <div class="strategy-group-header">
-            <span class="strategy-group-title">🏟️ 運動賽事 +EV 正期望值策略 &amp; 自動止盈/停損</span>
-            <label class="checkbox-pill" style="font-size:12px;color:#6ee7b7;border-color:rgba(16,185,129,0.4);background:rgba(16,185,129,0.12);" title="自動過濾易爆冷的 ATP/ITF 網球挑戰賽與次級電競賽事">
-              <input type="checkbox" id="cfg-exclude-upset" checked />
-              <span>🛡️ 排除高爆冷賽事 (網球挑戰賽/電競)</span>
-            </label>
-          </div>
-          <div class="strategy-subgrid strategy-subgrid-sports">
-            <div class="field-group">
-              <label for="cfg-min-prob">最低觸發勝率</label>
-              <div class="input-with-unit">
-                <input type="number" id="cfg-min-prob" min="10" max="98" step="0.5" value="70" required />
-                <span class="unit">%</span>
-              </div>
-              <small id="desc-min-prob">當運動選項勝率 &gt;= 70% 時立即觸發買入</small>
-            </div>
-
-            <div class="field-group">
-              <label for="cfg-max-prob">最高勝率上限 (+EV 禁追尾盤)</label>
-              <div class="input-with-unit">
-                <input type="number" id="cfg-max-prob" min="50" max="99.5" step="0.5" value="80" required />
-                <span class="unit">%</span>
-              </div>
-              <small id="desc-max-prob">高於 80% 不追高（鎖定 70% ~ 80% 黃金賠率區）</small>
-            </div>
-
-            <div class="field-group">
-              <label for="cfg-bet-amount">單筆投注金額</label>
-              <div class="input-with-unit">
-                <input type="number" id="cfg-bet-amount" min="1" max="10000" step="1" value="20" required />
-                <span class="unit">USDC</span>
-              </div>
-              <small id="desc-bet-amount">運動達標時，每場自動買入 $20 USDC</small>
-            </div>
-
-            <div class="field-group">
-              <label for="cfg-daily-budget">每日預算上限</label>
-              <div class="input-with-unit">
-                <input type="number" id="cfg-daily-budget" min="10" max="100000" step="10" value="300" required />
-                <span class="unit">USDC</span>
-              </div>
-              <small id="desc-daily-budget">運動單日上限 $300 USDC（約可投 15 場）</small>
-            </div>
-
-            <div class="field-group">
-              <label for="cfg-min-liquidity">最低盤口流動性</label>
-              <div class="input-with-unit">
-                <input type="number" id="cfg-min-liquidity" min="0" max="1000000" step="100" value="3000" required />
-                <span class="unit">USDC</span>
-              </div>
-              <small id="desc-min-liquidity">僅交易深度 &gt;= $3,000 USDC 的主流賽事</small>
-            </div>
-
-            <div class="field-group">
-              <label for="cfg-max-spread">最大買賣點差</label>
-              <div class="input-with-unit">
-                <input type="number" id="cfg-max-spread" min="0.5" max="25" step="0.5" value="4.0" required />
-                <span class="unit">%</span>
-              </div>
-              <small id="desc-max-spread">買賣價差 &gt; 4.0% 時自動跳過不買</small>
-            </div>
-
-            <div class="field-group field-group-tp-highlight">
-              <label for="cfg-tp-prob">🎯 自動提前止盈 (Take-Profit)</label>
-              <div class="input-with-unit" title="當持倉勝率升至此百分比時自動獲利了結，避開比賽最後幾分鐘傷停補時逆轉">
-                <input type="checkbox" id="cfg-tp-enabled" checked title="啟用自動停利" />
-                <span class="unit-prefix" style="color:#6ee7b7;">升至 &ge;</span>
-                <input type="number" id="cfg-tp-prob" min="75" max="99.5" step="0.5" value="93" />
-                <span class="unit">%</span>
-              </div>
-              <small id="desc-tp-prob">升至 93% 自動提前鎖利（防終場絕殺翻盤）</small>
-            </div>
-
-            <div class="field-group field-group-sl-highlight">
-              <label for="cfg-sl-minutes">⏱️ 停損前設：距離結束時間</label>
-              <div class="input-with-unit" title="僅當賽事距離結束剩餘分鐘數 <= 此值時才允許啟動自動停損 (設為 0 代表不限時間)">
-                <span class="unit-prefix">剩餘 &le;</span>
-                <input type="number" id="cfg-sl-minutes" min="0" max="1440" step="1" value="30" required />
-                <span class="unit">分鐘</span>
-              </div>
-              <small id="desc-sl-minutes">賽事結束前 30 分鐘內才允許停損</small>
-            </div>
-
-            <div class="field-group field-group-sl-highlight">
-              <label for="cfg-sl-prob">🛡️ 停損門檻：觸發停損勝率</label>
-              <div class="input-with-unit" title="當進入尾盤時間窗口且勝率跌至此百分比或以下時，自動停損平倉">
-                <input type="checkbox" id="cfg-sl-enabled" checked title="啟用自動停損" />
-                <span class="unit-prefix">跌至 &le;</span>
-                <input type="number" id="cfg-sl-prob" min="5" max="69" step="1" value="55" required />
-                <span class="unit">%</span>
-              </div>
-              <small id="desc-sl-prob">剩餘 &lt;= 30 分且勝率 &lt;= 55% 自動停損</small>
-            </div>
-          </div>
-        </div>
-
-        <!-- Group B: HK Temperature Strategy & Global Polling -->
-        <div class="strategy-group-card strategy-group-hk">
-          <div class="strategy-group-header">
-            <span class="strategy-group-title">🌡️ 香港氣溫策略 &amp; 全域輪詢</span>
-            <span class="strategy-group-sub">香港天文臺即時觀測 + Polymarket 溫度區間狙擊</span>
-          </div>
-          <div class="strategy-subgrid strategy-subgrid-hk">
-            <div class="field-group">
-              <label for="hk-pricemin-input">氣溫觸發勝率門檻</label>
-              <div class="input-with-unit">
-                <input type="number" id="hk-pricemin-input" min="10" max="99" step="1" value="70" required />
-                <span class="unit">%</span>
-              </div>
-              <small id="desc-hk-pricemin">溫度區間達 70% 立即買入（無上限）</small>
-            </div>
-
-            <div class="field-group">
-              <label for="hk-stake-input">氣溫單筆投注額</label>
-              <div class="input-with-unit">
-                <input type="number" id="hk-stake-input" min="1" max="1000" step="1" value="10" required />
-                <span class="unit">USDC</span>
-              </div>
-              <small id="desc-hk-stake">每日首個達標溫度選項買入 $10 USDC</small>
-            </div>
-
-            <div class="field-group">
-              <label for="hk-gatehour-input">開閘監測時間 (HKT)</label>
-              <div class="input-with-unit">
-                <input type="number" id="hk-gatehour-input" min="0" max="23" step="1" value="11" required />
-                <span class="unit">:00</span>
-              </div>
-              <small id="desc-hk-gatehour">香港時間 11:00 後開始自動監測</small>
-            </div>
-
-            <div class="field-group">
-              <label for="cfg-scan-interval">背景掃描間隔</label>
-              <div class="input-with-unit">
-                <input type="number" id="cfg-scan-interval" min="2" max="120" step="1" value="5" required title="背景掃描間隔(秒)" />
-                <span class="unit">秒 / 次</span>
-              </div>
-              <small id="desc-scan-interval">每 5 秒自動掃描雙引擎盤口</small>
-            </div>
-
-            <div class="field-group" style="grid-column: 1 / -1;">
-              <label for="cfg-max-positions">最大同時持倉上限</label>
-              <div class="input-with-unit">
-                <input type="number" id="cfg-max-positions" min="1" max="100" step="1" value="15" required title="最大同時持倉數" />
-                <span class="unit">筆活躍持倉</span>
-              </div>
-              <small id="desc-scan-positions">每 5 秒掃描一次 · 最多同時持有 15 倉</small>
-            </div>
-          </div>
-        </div>
-      </form>
-
-      <!-- Live Dynamic Strategy Summary Strip -->
-      <div id="strategy-live-summary" class="strategy-summary-bar">
-        📋 <strong>目前生效策略：</strong>【🏟️ 運動賽事】勝率介於 <strong>70% ~ 95%</strong>（深度 &gt;= $1,500、點差 &lt;= 5.0%）時，依最快結束優先買入 <strong>$25 USDC</strong>（升至 96% 停利 / <strong>剩餘 &lt;= 20 分鐘且勝率 &lt;= 52% 自動停損</strong>）；【🌡️ 香港氣溫】於 <strong>11:00 HKT</strong> 後達 <strong>70%+</strong> 自動買入 <strong>$10 USDC</strong>。
+    <!-- 2. Single-Row Horizontal Race Selector Bar (R1 .. R11) -->
+    <section class="race-selector-bar" aria-label="全日賽事切換">
+      <div class="race-tablist scroller" id="hkjc-race-tablist" focusgroup="tablist nomemory" role="tablist" aria-label="香港賽馬會全日賽事列表">
+        <!-- Populated dynamically with R1..R11 -->
       </div>
     </section>
 
-    <!-- 3. Unified Main Two-Column Workspace -->
+    <!-- 3. Clean Two-Column Main Workspace -->
     <div class="workspace-grid">
-      <!-- Left Column: HK Temperature Monitor + Global Sports Radar -->
-      <div class="main-monitors-stack">
-        <!-- =============================================================== -->
-        <!-- MONITOR A: HONG KONG DAILY HIGHEST TEMPERATURE                  -->
-        <!-- =============================================================== -->
-        <section id="section-hktemp-monitor" class="panel hktemp-integrated-panel">
-          <div class="panel-header">
-            <div class="panel-title-group">
-              <div class="brand-title-row">
-                <span class="hk-badge-icon">溫</span>
-                <h2 class="panel-title" id="hk-market-title">🌡️ 香港天文臺每日最高氣溫盤口</h2>
-                <span class="badge badge-success" id="hk-market-status-badge">開放</span>
-                <span class="badge badge-outline" id="hk-obs-status-badge">天文臺：即時</span>
-                <span class="badge badge-accent" id="hk-poly-status-badge">Polymarket 即時</span>
-              </div>
-              <span class="panel-hint" id="hk-phase-message">
-                香港時間 11:00 之後，監測當日所有「是」選項；價格達到 70% 或以上時立即以設定金額自動投注（無價格上限）。
-              </span>
-            </div>
-
-            <div class="subnav-pills" role="tablist">
-              <button type="button" class="subnav-btn active" id="hk-subnav-overview-btn" data-hktab="overview">
-                📊 今日溫度區間 (70%+)
-              </button>
-              <button type="button" class="subnav-btn" data-hktab="records">
-                🌦️ 歷史預報誤差對照
-              </button>
-            </div>
-          </div>
-
-          <!-- Compact Weather Info Strip -->
-          <div class="hk-weather-strip">
-            <div class="hk-weather-pill">
-              <span class="hk-wp-label">📍 天文臺總部現時氣溫</span>
-              <strong id="hk-strip-current">--°C</strong>
-              <small id="hk-current-detail">香港天文臺</small>
-            </div>
-            <div class="hk-weather-pill">
-              <span class="hk-wp-label">☀️ 今日預測最高 / 最低 (<span id="hk-forecast-date">--</span>)</span>
-              <strong id="hk-strip-forecast">--°C</strong>
-              <small id="hk-forecast-desc">載入香港天文臺預報中...</small>
-            </div>
-            <div class="hk-weather-pill">
-              <span class="hk-wp-label">🕒 最高溫出現時間 &amp; 自動閘門狀態</span>
-              <strong id="hk-strip-maxtime">--:--</strong>
-              <small id="hk-max-time-note"><span id="hk-phase-label">即時監測中</span> · 紅線標示 <span id="hk-rule-prob-text">70%</span> 門檻</small>
-            </div>
-          </div>
-
-          <!-- Sub-tab 1: Today's 11 Temperature Buckets Grid -->
-          <div id="hktab-overview">
-            <div id="hk-outcomes-container" class="hk-outcomes-grid">
-              <div class="empty-cell">正在載入今日香港最高氣溫 11 個溫度區間即時報價...</div>
-            </div>
-          </div>
-
-          <!-- Sub-tab 2: Historical Weather Forecast vs Actual Comparison Table -->
-          <div id="hktab-records" class="hidden">
-            <div class="table-scroll">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>市場日期</th>
-                    <th>天文臺預測最高</th>
-                    <th>預報基準時間</th>
-                    <th>官方實測日最高 (CLMMAXT)</th>
-                    <th>最高溫出現時間 (10分鐘檔)</th>
-                    <th>預測誤差 (實際 - 預測)</th>
-                  </tr>
-                </thead>
-                <tbody id="hk-weather-records-tbody">
-                  <tr><td colspan="6" class="empty-cell">正在載入香港天文臺歷史天氣對照資料...</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
+      <!-- Left Primary Column: Race Header, Post-Race Report (when settled), Runners Table, Exotic Cards -->
+      <div class="main-column">
+        <!-- A. Compact Race Info & Collapsible Speed Map Strip -->
+        <section class="panel race-header-panel" id="hkjc-race-banner">
+          <!-- Populated dynamically -->
         </section>
 
-        <!-- =============================================================== -->
-        <!-- MONITOR B: GLOBAL SPORTS MARKETS                                -->
-        <!-- =============================================================== -->
-        <section id="section-sports-monitor" class="panel markets-panel">
+        <!-- B. Post-Race Official Result Comparison & Auto-Upgrade Report (Shown when race is SETTLED) -->
+        <section class="panel postrace-panel hidden" id="hkjc-postrace-panel" aria-live="polite">
+          <!-- Populated dynamically -->
+        </section>
+
+        <!-- C. Streamlined 6-Column Runners Quant Table -->
+        <section class="panel table-panel">
           <div class="panel-header">
-            <div class="panel-title-group">
-              <div class="brand-title-row">
-                <h2 class="panel-title" id="sports-monitor-title">🏟️ Polymarket 全球運動賽事即時勝率監測表</h2>
-                <span class="badge badge-accent">⏱️ 最快結束優先排序</span>
-                <span class="badge badge-outline">🔒 同項目單次投注</span>
+            <div>
+              <div class="panel-title-row">
+                <h2 class="panel-title" id="hkjc-table-title">🐎 參賽馬匹實時量化定價與凱利投注策略表</h2>
+                <span class="badge badge-outline" id="hkjc-field-rule-badge">馬會實時獨贏 / 位置賠率</span>
               </div>
-              <span class="panel-hint" id="last-scan-timestamp">最後掃描：剛才</span>
             </div>
-
-            <div class="filter-controls">
-              <label class="checkbox-pill">
-                <input type="checkbox" id="filter-only-70" />
-                <span id="filter-only-70-label">🔥 僅看 &gt;= 70% 選項</span>
-              </label>
-              <input type="search" id="market-search-input" class="input-search" placeholder="搜尋球隊、聯賽或賽事..." />
+            <div class="panel-actions">
+              <button type="button" id="hkjc-auto-bet-btn" class="btn btn-outline btn-sm" title="根據目前模型權重為本場重新生成正期望值 (+EV) 凱利建議注單">
+                🎯 自動部署本場 +EV 注單
+              </button>
+              <button type="button" id="hkjc-settle-current-btn" class="btn btn-primary btn-sm">
+                🏁 結算本場賽果並升級模型
+              </button>
             </div>
           </div>
 
-          <div class="sport-tabs" id="sport-tabs" role="tablist">
-            <button type="button" class="sport-tab active" data-sport="ALL">全部運動</button>
-            <button type="button" class="sport-tab" data-sport="NBA">🏀 NBA 籃球</button>
-            <button type="button" class="sport-tab" data-sport="SOCCER">⚽ 足球</button>
-            <button type="button" class="sport-tab" data-sport="NFL">🏈 NFL 美足</button>
-            <button type="button" class="sport-tab" data-sport="MLB">⚾ MLB 棒球</button>
-            <button type="button" class="sport-tab" data-sport="NHL">🏒 NHL 冰球</button>
-            <button type="button" class="sport-tab" data-sport="TENNIS">🎾 網球</button>
-            <button type="button" class="sport-tab" data-sport="UFC">🥊 UFC 格鬥</button>
-            <button type="button" class="sport-tab" data-sport="ESPORTS">🎮 電競</button>
-          </div>
-
-          <div class="table-scroll">
-            <table class="data-table">
+          <div tabindex="0" role="region" aria-labelledby="hkjc-runners-caption" class="table-wrapper hkjc-table-wrapper">
+            <table class="data-table hkjc-runners-table">
+              <caption id="hkjc-runners-caption" class="sr-only">香港賽馬會參賽馬匹量化勝率、馬會實時賠率與凱利建議注碼表</caption>
               <thead>
                 <tr>
-                  <th>運動賽事 &amp; 結束倒數 (最快 ➔ 最遲)</th>
-                  <th>各選項即時勝率</th>
-                  <th>盤口深度 &amp; 點差</th>
-                  <th>風控判定狀態</th>
-                  <th class="text-right">操作</th>
+                  <th>馬號 / 馬名 / 騎練</th>
+                  <th>檔位 / 負磅 / 評分 / 近績</th>
+                  <th>核心量化信號 (速指 / 際遇 / 戰意 / 聰明錢)</th>
+                  <th>勝率：進化 2.0 vs 1.0 &amp; 入位率</th>
+                  <th>馬會實時賠率 (獨贏 / 位置)</th>
+                  <th class="text-right">期望值 (+EV) &amp; 投注策略</th>
                 </tr>
               </thead>
-              <tbody id="markets-tbody">
+              <tbody id="hkjc-runners-tbody">
                 <tr>
-                  <td colspan="5" class="empty-cell">正在載入 Polymarket 運動賽事數據...</td>
+                  <td colspan="6" class="empty-cell">正在載入香港賽馬會實時排位與賠率數據...</td>
                 </tr>
               </tbody>
             </table>
           </div>
         </section>
+
+        <!-- D. Top-3 Discounted Harville Exotic Value Cards (Quinella 連贏 / Place Quinella 位置Q) -->
+        <section class="panel exotic-panel">
+          <div class="panel-header">
+            <div class="panel-title-row">
+              <h2 class="panel-title">🎯 複式彩池高期望值策略（馬會實時連贏 QIN / 位置Q QPL 賠率 × Discounted Harville 定價）</h2>
+              <span class="badge badge-accent">鎖定 Top-4 主力互串</span>
+            </div>
+          </div>
+          <div id="hkjc-exotic-grid" class="exotic-grid">
+            <!-- Populated dynamically -->
+          </div>
+        </section>
       </div>
 
-      <!-- Right Side Column: Sticky Positions & Execution Logs -->
+      <!-- Right Sidebar Column: Clean 3-Tab Panel (Bets Ledger | Model Weights & Evolution | Telegram Push Log) -->
       <aside class="side-column">
-        <section class="panel positions-panel">
-          <div class="panel-header">
-            <div class="tab-buttons" role="tablist">
-              <button type="button" class="tab-btn active" id="tab-open-pos-btn">
-                🏟️ 運動持倉 (<span id="open-pos-badge">0</span>)
+        <section class="panel side-tabbed-panel">
+          <div class="panel-header side-tabs-header">
+            <div class="side-tablist scroller" focusgroup="tablist nomemory" role="tablist" aria-label="帳本、模型進化與 Telegram 推播切換">
+              <button type="button" id="side-tab-bets" class="side-tab" role="tab" aria-selected="true" focusgroupstart>
+                🧾 策略帳本 (<span id="hkjc-total-bets-count">0</span>)
               </button>
-              <button type="button" class="tab-btn" id="tab-hk-pos-btn">
-                🌡️ 氣溫注項 (<span id="hk-pos-badge">0</span>)
+              <button type="button" id="side-tab-model" class="side-tab" role="tab" aria-selected="false">
+                🧬 自進化權重 (<span id="hkjc-evo-count-badge">0</span>)
               </button>
-              <button type="button" class="tab-btn" id="tab-closed-pos-btn">
-                📜 已結算 (<span id="closed-pos-badge">0</span>)
+              <button type="button" id="side-tab-tg" class="side-tab" role="tab" aria-selected="false">
+                ✈️ TG 推播 (<span id="hkjc-tg-count-badge">0</span>)
               </button>
             </div>
-            <span class="badge badge-accent" id="positions-ledger-badge">🧪 模擬盤帳本</span>
           </div>
 
-          <div id="open-positions-view" class="positions-list"></div>
-          <div id="hk-positions-view" class="positions-list hidden"></div>
-          <div id="closed-positions-view" class="positions-list hidden"></div>
-        </section>
-
-        <section class="panel logs-panel">
-          <div class="panel-header">
-            <div class="panel-title-group">
-              <h2 class="panel-title" id="logs-panel-title">⚡ 24/7 雙引擎交易日誌 (模擬盤)</h2>
+          <!-- Tab Panel 1: Paper Betting Ledger -->
+          <div id="side-panel-bets" role="tabpanel" aria-labelledby="side-tab-bets" tabindex="0">
+            <div class="side-panel-inner">
+              <div class="ledger-filter-bar">
+                <button type="button" id="filter-bets-all" class="filter-chip active">全部場次注單</button>
+                <button type="button" id="filter-bets-race" class="filter-chip">僅看本場注單</button>
+                <button type="button" id="filter-bets-settled" class="filter-chip">已結算注單</button>
+              </div>
+              <div id="hkjc-bets-list" class="side-scroll-list"></div>
             </div>
-            <span class="badge badge-outline" id="log-count-badge">即時更新</span>
           </div>
-          <div id="trade-logs-list" class="logs-terminal" role="log" aria-live="polite"></div>
+
+          <!-- Tab Panel 2: 6-Submodel Live Weights & Post-Race Evolution Log -->
+          <div id="side-panel-model" role="tabpanel" aria-labelledby="side-tab-model" hidden="until-found">
+            <div class="side-panel-inner">
+              <div class="subpanel-heading">
+                <span>🔒 六大子模型實時權重 (防人為竄改 · 僅由賽後自然梯度更新)</span>
+              </div>
+              <div id="hkjc-weights-grid" class="weights-compact-list"></div>
+
+              <div class="subpanel-heading" style="margin-top:14px;">
+                <span>📜 逐場賽後檢討與自動升級紀錄</span>
+              </div>
+              <div id="hkjc-evolutions-list" class="side-scroll-list"></div>
+            </div>
+          </div>
+
+          <!-- Tab Panel 3: Telegram Strategy Push History & Preview -->
+          <div id="side-panel-tg" role="tabpanel" aria-labelledby="side-tab-tg" hidden="until-found">
+            <div class="side-panel-inner">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:8px;">
+                <span class="badge badge-outline" id="hkjc-tg-status-pill">檢查 Telegram 設定中...</span>
+                <button type="button" id="side-push-tg-btn" class="btn btn-primary btn-sm">
+                  📲 立即推播本場策略
+                </button>
+              </div>
+              <div id="hkjc-tg-logs-list" class="side-scroll-list"></div>
+            </div>
+          </div>
         </section>
       </aside>
     </div>
-    </div><!-- /#view-directional-dashboard -->
-
-    <!-- ================================================================= -->
-    <!-- VIEW 2: PASSIVE MARKET MAKING & LIQUIDITY REWARDS ($500 LP)       -->
-    <!-- ================================================================= -->
-    <div id="view-lp-dashboard" class="dashboard-view-stack hidden">
-      <!-- 1. 4-Card LP Executive KPI Strip -->
-      <section class="kpi-grid kpi-grid-4" aria-label="被動做市與流動性獎勵核心指標">
-        <!-- LP KPI 1: Capital & Slot Allocation -->
-        <article class="kpi-card">
-          <div class="kpi-header">
-            <span class="kpi-label" id="lp-kpi-capital-label">💰 做市總淨值 ($500 起始資金)</span>
-            <button type="button" id="lp-reset-paper-btn" class="btn-link" title="重置 $500 模擬被動做市帳戶">重置 $500 模擬金</button>
-          </div>
-          <div class="kpi-value" id="lp-kpi-equity">$500.00</div>
-          <div class="kpi-sub">
-            雙邊掛單中 <strong id="lp-kpi-deployed">$400.00</strong> (<span id="lp-kpi-slots">4 / 4 槽位</span>) · 20% 緩衝金 <strong id="lp-kpi-reserve">$100.00</strong>
-          </div>
-        </article>
-
-        <!-- LP KPI 2: Estimated Daily / Monthly Liquidity Rewards & APR -->
-        <article class="kpi-card kpi-card-highlight">
-          <div class="kpi-header">
-            <span class="kpi-label">💧 預估流動性獎勵收益 (Quadratic)</span>
-            <span class="badge badge-success" id="lp-kpi-apr-badge">APR --%</span>
-          </div>
-          <div class="kpi-value pnl-pos" id="lp-kpi-daily-reward">+$0.00 / 日</div>
-          <div class="kpi-sub">
-            預估月收益 <strong id="lp-kpi-monthly-reward">+$0.00 / 月</strong> · 雙邊平方總得分 <strong id="lp-kpi-qscore">Q = 0.0</strong>
-          </div>
-        </article>
-
-        <!-- LP KPI 3: Accrued Rewards + Maker Spread PnL -->
-        <article class="kpi-card">
-          <div class="kpi-header">
-            <span class="kpi-label">📈 累計已領獎勵 &amp; 價差總損益</span>
-            <span class="badge badge-accent">Maker 0% 手續費</span>
-          </div>
-          <div class="kpi-value pnl-pos" id="lp-kpi-total-profit">+$0.00</div>
-          <div class="kpi-sub">
-            流動性獎勵 <strong class="pnl-pos" id="lp-kpi-accrued-reward">+$0.0000</strong> · 買賣價差損益 <strong id="lp-kpi-spread-pnl">+$0.00</strong>
-          </div>
-        </article>
-
-        <!-- LP KPI 4: 4-Layer Anti-Adverse Selection & Inventory Status -->
-        <article class="kpi-card">
-          <div class="kpi-header">
-            <span class="kpi-label">🛡️ 四層防毒流風控 &amp; 淨庫存暴露</span>
-            <span class="badge badge-outline" id="lp-kpi-shield-badge">POST_ONLY 護盾</span>
-          </div>
-          <div class="kpi-value" id="lp-kpi-inventory">$0.00</div>
-          <div class="kpi-sub" id="lp-kpi-risk-sub">
-            單盤庫存上限 <strong id="lp-kpi-max-inv">$60</strong> · 賽前 <strong id="lp-kpi-cutoff-hrs">6h</strong> 自動清退
-          </div>
-        </article>
-      </section>
-
-      <!-- 2. $500 4-Layer Passive Market Making Strategy Configuration Panel -->
-      <section class="panel strategy-panel">
-        <div class="panel-header">
-          <div class="panel-title-group">
-            <div class="brand-title-row">
-              <h2 class="panel-title" id="lp-strategy-title">💧 $500 被動做市與流動性獎勵四層防護策略設定</h2>
-              <span class="badge badge-accent" id="lp-strategy-badge">二檔護盾雙邊報價 · 防毒流秒撤</span>
-            </div>
-          </div>
-          <div class="panel-actions">
-            <button type="button" id="lp-auto-toggle-btn" class="btn btn-bot-active">
-              <span>💧 自動選盤做市：運行中</span>
-            </button>
-            <button type="button" id="lp-test-killswitch-btn" class="btn btn-secondary" title="模擬某個做市盤口中價瞬間跳動 > 2.5¢，測試第四層毫秒級防毒流撤單保護">
-              ⚡ 測試突發波動閃電撤單
-            </button>
-            <button type="button" id="lp-save-config-btn" class="btn btn-primary">
-              💾 儲存做市設定
-            </button>
-            <button type="button" id="lp-toggle-body-btn" class="btn btn-ghost">
-              🔼 收合參數
-            </button>
-          </div>
-        </div>
-
-        <form id="lp-strategy-form" class="strategy-groups-wrapper lp-strategy-groups-wrapper">
-          <!-- Group A: Layer 1 & 2 - Capital Allocation & Quadratic Two-Sided Quoting -->
-          <div class="strategy-group-card">
-            <div class="strategy-group-header">
-              <span class="strategy-group-title">💰 第一～二層：資金槽位切分 &amp; 二次方高分雙邊報價 (Quadratic Quoting)</span>
-              <span class="strategy-group-sub">強制 POST_ONLY 免手續費 · 雙邊對稱掛單享 300% 滿額權重</span>
-            </div>
-            <div class="strategy-subgrid strategy-subgrid-sports">
-              <div class="field-group">
-                <label for="lp-cfg-capital">做市總資金池</label>
-                <div class="input-with-unit">
-                  <input type="number" id="lp-cfg-capital" min="50" max="100000" step="50" value="500" required />
-                  <span class="unit">USDC</span>
-                </div>
-                <small id="lp-desc-capital">總資金 $500（可動用掛單 $400 + 緩衝 $100）</small>
-              </div>
-
-              <div class="field-group">
-                <label for="lp-cfg-reserve">現金緩衝保留比例</label>
-                <div class="input-with-unit">
-                  <input type="number" id="lp-cfg-reserve" min="0" max="80" step="5" value="20" required />
-                  <span class="unit">%</span>
-                </div>
-                <small id="lp-desc-reserve">保留 20% ($100 USDC) 應對單邊接單與對沖</small>
-              </div>
-
-              <div class="field-group">
-                <label for="lp-cfg-slots">同時做市槽位數</label>
-                <div class="input-with-unit">
-                  <input type="number" id="lp-cfg-slots" min="1" max="20" step="1" value="4" required />
-                  <span class="unit">個市場</span>
-                </div>
-                <small id="lp-desc-slots">分散於前 4 名最高獎勵效率的利基市場</small>
-              </div>
-
-              <div class="field-group">
-                <label for="lp-cfg-perslot">單槽位雙邊總額</label>
-                <div class="input-with-unit">
-                  <input type="number" id="lp-cfg-perslot" min="20" max="25000" step="10" value="100" required />
-                  <span class="unit">USDC</span>
-                </div>
-                <small id="lp-desc-perslot">每市場買單 (Bid) $50 + 賣單 (Ask) $50</small>
-              </div>
-
-              <div class="field-group">
-                <label for="lp-cfg-offset">二檔護盾掛單偏移</label>
-                <div class="input-with-unit">
-                  <span class="unit-prefix">Mid &plusmn;</span>
-                  <input type="number" id="lp-cfg-offset" min="0.2" max="4.5" step="0.1" value="1.2" required />
-                  <span class="unit">¢</span>
-                </div>
-                <small id="lp-desc-offset">掛在 Mid ± 1.2¢（兼顧平方高分與前檔肉盾）</small>
-              </div>
-
-              <div class="field-group">
-                <label for="lp-cfg-inventory">單盤最大淨庫存上限</label>
-                <div class="input-with-unit">
-                  <input type="number" id="lp-cfg-inventory" min="10" max="10000" step="5" value="60" required />
-                  <span class="unit">USDC</span>
-                </div>
-                <small id="lp-desc-inventory">單邊被成交達 $60 停止接刀，專注反手平倉</small>
-              </div>
-            </div>
-          </div>
-
-          <!-- Group B: Layer 3 & 4 - Safe Midpoint Guard & Anti-Adverse Selection Kill-Switch -->
-          <div class="strategy-group-card strategy-group-hk">
-            <div class="strategy-group-header">
-              <span class="strategy-group-title">🛡️ 第三～四層：安全中價過濾 &amp; 毫秒級防毒流撤單 (Kill-Switch)</span>
-              <span class="strategy-group-sub">防止被知情巨鯨或滾球比分異動吃單套牢</span>
-            </div>
-            <div class="strategy-subgrid strategy-subgrid-sports">
-              <div class="field-group">
-                <label for="lp-cfg-mid-min">最低安全中價門檻</label>
-                <div class="input-with-unit">
-                  <span class="unit-prefix">中價 &ge;</span>
-                  <input type="number" id="lp-cfg-mid-min" min="5" max="49" step="1" value="25" required title="最低安全中價(¢)" />
-                  <span class="unit">¢</span>
-                </div>
-                <small id="lp-desc-mid-min">低於 25¢ 的極端冷門盤不掛單</small>
-              </div>
-
-              <div class="field-group">
-                <label for="lp-cfg-mid-max">最高安全中價門檻</label>
-                <div class="input-with-unit">
-                  <span class="unit-prefix">中價 &le;</span>
-                  <input type="number" id="lp-cfg-mid-max" min="51" max="95" step="1" value="75" required title="最高安全中價(¢)" />
-                  <span class="unit">¢</span>
-                </div>
-                <small id="lp-desc-mid-max">高於 75¢ 的極端尾盤自動撤單</small>
-              </div>
-
-              <div class="field-group">
-                <label for="lp-cfg-shield">第一檔肉盾最低深度</label>
-                <div class="input-with-unit">
-                  <input type="number" id="lp-cfg-shield" min="0" max="50000" step="25" value="150" required />
-                  <span class="unit">USDC</span>
-                </div>
-                <small id="lp-desc-shield">前檔保護深度 &lt; $150 時自動撤單避險</small>
-              </div>
-
-              <div class="field-group field-group-sl-highlight">
-                <label for="lp-cfg-velocity">⚡ 瞬跳閃電撤單門檻</label>
-                <div class="input-with-unit">
-                  <span class="unit-prefix">瞬跳 &gt;</span>
-                  <input type="number" id="lp-cfg-velocity" min="0.5" max="20" step="0.5" value="2.5" required />
-                  <span class="unit">¢</span>
-                </div>
-                <small id="lp-desc-velocity">15 秒內中價跳動 &gt; 2.5¢ 立即自動撤單</small>
-              </div>
-
-              <div class="field-group field-group-sl-highlight">
-                <label for="lp-cfg-cutoff">⏱️ 賽前/結算前自動清退</label>
-                <div class="input-with-unit">
-                  <span class="unit-prefix">剩餘 &le;</span>
-                  <input type="number" id="lp-cfg-cutoff" min="1" max="168" step="1" value="6" required />
-                  <span class="unit">小時</span>
-                </div>
-                <small id="lp-desc-cutoff">開賽或結算前 6 小時自動撤除所有做市單</small>
-              </div>
-
-              <div class="field-group field-group-sl-highlight">
-                <label for="lp-cfg-cooldown">🧊 撤單後防毒流冷卻</label>
-                <div class="input-with-unit">
-                  <input type="number" id="lp-cfg-cooldown" min="15" max="3600" step="15" value="120" required />
-                  <span class="unit">秒</span>
-                </div>
-                <small id="lp-desc-cooldown">觸發閃電撤單後暫停報價 120 秒</small>
-              </div>
-            </div>
-          </div>
-        </form>
-
-        <!-- Live Dynamic LP Strategy Summary Strip -->
-        <div id="lp-strategy-live-summary" class="strategy-summary-bar">
-          📋 <strong>目前做市策略描述：</strong>以總資金 <strong>$500 USDC</strong> 切分為 <strong>4 個做市槽位</strong>（每槽位 <strong>$100</strong>：買方 $50 + 賣方 $50，預留 <strong>20% / $100</strong> 緩衝），僅挑選中價 <strong>25¢ ~ 75¢</strong>、距離結算 <strong>&gt; 6 小時</strong> 且前檔肉盾 <strong>&gt;= $150</strong> 的高獎勵盤，於 <strong>Mid &plusmn; 1.2¢</strong> 雙邊被動掛單；若中價瞬跳 <strong>&gt; 2.5¢</strong> 則毫秒級自動撤單避險。
-        </div>
-      </section>
-
-      <!-- 3. Two-Column LP Workspace: Rewards Radar Table + Active Two-Sided Quotes & Logs -->
-      <div class="workspace-grid">
-        <!-- Left Column: Polymarket Liquidity Rewards Radar Table -->
-        <div class="main-monitors-stack">
-          <section class="panel markets-panel">
-            <div class="panel-header">
-              <div class="panel-title-group">
-                <div class="brand-title-row">
-                  <h2 class="panel-title">🏆 Polymarket 流動性獎勵高效率盤口雷達表 (Quadratic Yield Radar)</h2>
-                  <span class="badge badge-success">依獎勵收益率自動排序</span>
-                  <span class="badge badge-outline">自動過濾滾球高危盤</span>
-                </div>
-                <span class="panel-hint">
-                  系統自動計算每個盤口的官方最大有效點差 (<code>rewards_max_spread</code>)、最低有效股數 (<code>rewards_min_size</code>)、二次方得分 <code>Q</code> 與投入單槽位的預估日領獎勵。
-                </span>
-              </div>
-            </div>
-
-            <div class="table-scroll">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>市場名稱 / 類別 &amp; 距離結算時間</th>
-                    <th>中價 &amp; 雙邊掛單價位 (Bid / Ask)</th>
-                    <th>官方獎勵池 &amp; 計分門檻</th>
-                    <th>前檔肉盾 &amp; 預估獎勵收益 (APR)</th>
-                    <th>四層防護判定</th>
-                    <th class="text-right">操作</th>
-                  </tr>
-                </thead>
-                <tbody id="lp-markets-tbody">
-                  <tr>
-                    <td colspan="6" class="empty-cell">正在載入 Polymarket 流動性獎勵盤口數據...</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </section>
-        </div>
-
-        <!-- Right Sticky Column: Active Two-Sided Quote Slots & LP Execution Logs -->
-        <aside class="side-column">
-          <section class="panel positions-panel">
-            <div class="panel-header">
-              <div class="tab-buttons" role="tablist">
-                <button type="button" class="tab-btn active" id="tab-lp-active-btn">
-                  💧 雙邊掛單中 (<span id="lp-active-badge">0</span>)
-                </button>
-                <button type="button" class="tab-btn" id="tab-lp-history-btn">
-                  📜 已撤單/清退 (<span id="lp-history-badge">0</span>)
-                </button>
-              </div>
-              <span class="badge badge-accent" id="lp-ledger-badge">🧪 模擬做市帳本</span>
-            </div>
-
-            <div id="lp-active-slots-view" class="positions-list"></div>
-            <div id="lp-history-slots-view" class="positions-list hidden"></div>
-          </section>
-
-          <section class="panel logs-panel">
-            <div class="panel-header">
-              <div class="panel-title-group">
-                <h2 class="panel-title" id="lp-logs-title">⚡ 被動做市與防毒流撤單日誌 (模擬盤)</h2>
-              </div>
-              <span class="badge badge-outline">POST_ONLY</span>
-            </div>
-            <div id="lp-logs-list" class="logs-terminal" role="log" aria-live="polite"></div>
-          </section>
-        </aside>
-      </div>
-    </div><!-- /#view-lp-dashboard -->
   </main>
 
-  <!-- Native Modal 0: Admin Password Authentication for Live Trading Ledger -->
-  <dialog id="auth-modal" class="modal-dialog" closedby="any">
+  <!-- =================================================================== -->
+  <!-- LIGHT-DISMISS MODAL: TELEGRAM BOT STRATEGY PUSH BINDING             -->
+  <!-- =================================================================== -->
+  <dialog id="hkjc-telegram-modal" class="modal-dialog" closedby="any" aria-labelledby="hkjc-tg-title">
     <div class="modal-content">
       <div class="modal-header">
         <div>
-          <h3>🔒 實盤專區 (LIVE) 密碼保護與安全管理</h3>
-          <p class="modal-subtitle">模擬盤 (Trial Run) 開放測試策略；實盤的持倉、勝率、損益、日誌與 CLOB 錢包均受密碼保護並與模擬盤完全隔離</p>
+          <h3 id="hkjc-tg-title">✈️ Telegram 每場賽前投注策略 &amp; 賽後進化自動推播設定</h3>
+          <p class="modal-subtitle">綁定後，系統會在每一場開跑前及上一場完賽升級後，自動將最新 Benter 2.0 投注策略發送至您的 Telegram</p>
         </div>
-        <button type="button" id="close-auth-modal-btn" class="btn-icon" aria-label="關閉視窗">✕</button>
+        <button type="button" id="close-tg-modal-btn" class="btn-icon" aria-label="關閉視窗">✕</button>
       </div>
 
-      <!-- View A: Login Form (Shown when NOT authenticated) -->
-      <form id="auth-login-form" class="modal-body">
-        <div class="alert-box alert-info" id="auth-modal-banner">
-          🔐 請輸入實盤管理員密碼以解鎖「⚡ 實盤專區」獨立帳本及 CLOB 錢包設定（預設密碼：<code>poly8888</code>，登入後可立即修改，亦可透過 Railway 環境變數 <code>ADMIN_PASSWORD</code> 設定）。
-        </div>
-
-        <div class="field-group">
-          <label for="auth-password-input">實盤管理員密碼 (Admin Password)</label>
-          <input type="password" id="auth-password-input" placeholder="請輸入管理員密碼..." autocomplete="current-password" required />
-        </div>
-
-        <div class="modal-footer">
-          <button type="submit" class="btn btn-primary">
-            🔓 解鎖並進入實盤專區
-          </button>
-        </div>
-      </form>
-
-      <!-- View B: Manage Password & Logout (Shown when authenticated as Admin) -->
-      <div id="auth-manage-section" class="modal-body hidden">
-        <div class="alert-box alert-info">
-          ✅ 您目前已通過實盤管理員驗證！您可以在上方自由切換「🧪 模擬盤 (Trial Run)」與「⚡ 實盤專區 (Live)」檢視各自的獨立帳本與勝率。
-        </div>
-
-        <form id="auth-change-pw-form" class="step-card">
-          <h4>🔑 修改實盤管理員密碼</h4>
-          <div class="field-row-2">
-            <div class="field-group">
-              <label for="auth-curr-pw">目前密碼</label>
-              <input type="password" id="auth-curr-pw" placeholder="輸入目前密碼" autocomplete="current-password" required />
+      <form id="hkjc-tg-form" class="modal-body">
+        <div class="settings-grid">
+          <div class="field-group">
+            <label for="hkjc-tg-token">Telegram Bot Token (向 @BotFather 申請)</label>
+            <div class="input-with-unit">
+              <input type="password" id="hkjc-tg-token" placeholder="例如：123456789:ABCdefGHIjklMNOpqrSTUvwxYZ" autocomplete="off" />
             </div>
-            <div class="field-group">
-              <label for="auth-new-pw">新密碼 (至少 4 碼)</label>
-              <input type="password" id="auth-new-pw" placeholder="輸入新密碼" minlength="4" autocomplete="new-password" required />
+            <small id="hkjc-tg-token-hint">亦可透過伺服器環境變數 <code>TELEGRAM_BOT_TOKEN</code> 設定</small>
+          </div>
+
+          <div class="field-group">
+            <label for="hkjc-tg-chatid">您的 Telegram Chat ID / 群組 ID</label>
+            <div class="input-with-unit">
+              <input type="text" id="hkjc-tg-chatid" placeholder="例如：987654321 或 -100123456789" autocomplete="off" />
             </div>
+            <small>可向 <code>@userinfobot</code> 傳訊取得您的個人 Chat ID，或透過環境變數 <code>TELEGRAM_CHAT_ID</code> 設定</small>
           </div>
-          <div style="display:flex;justify-content:flex-end;margin-top:6px;">
-            <button type="submit" class="btn btn-secondary">💾 更新實盤密碼</button>
-          </div>
-        </form>
-
-        <div class="modal-footer">
-          <button type="button" id="auth-logout-btn" class="btn btn-outline" style="border-color:rgba(244,63,94,0.45);color:#fda4af;">
-            🔒 登出並鎖定實盤專區
-          </button>
         </div>
-      </div>
-    </div>
-  </dialog>
 
-  <!-- Native Modal 1: Polymarket CLOB Wallet & API Credentials -->
-  <dialog id="clob-modal" class="modal-dialog" closedby="any">
-    <div class="modal-content">
-      <div class="modal-header">
-        <div>
-          <h3>🔐 Polymarket CLOB 真實自動下單設定</h3>
-          <p class="modal-subtitle">此憑證同時適用於「運動 70%+ 自動交易」與「香港氣溫 70%+ 自動交易」</p>
-        </div>
-        <button type="button" id="close-clob-modal-btn" class="btn-icon" aria-label="關閉視窗">✕</button>
-      </div>
-
-      <form id="clob-form" class="modal-body">
-        <div class="alert-box alert-info" id="clob-verify-banner">
-          💡 提示：您的私鑰僅儲存於本機或您專屬的伺服器環境中，用於簽署 Polygon (Chain ID 137) EIP-712 CLOB 訂單。
+        <div class="settings-switches">
+          <label class="checkbox-pill">
+            <input type="checkbox" id="hkjc-tg-enabled" checked />
+            <span>📲 啟用每場賽前投注策略與賽後進化報告自動推播至 Telegram</span>
+          </label>
         </div>
 
         <div class="field-group">
-          <label for="clob-private-key">Polygon 錢包私鑰 (POLY_PRIVATE_KEY)</label>
-          <input type="password" id="clob-private-key" placeholder="0x... (匯出自 Polymarket 綁定錢包或 MetaMask)" autocomplete="off" />
-          <small id="clob-pk-status">目前狀態：尚未設定</small>
-        </div>
-
-        <div class="field-group">
-          <label for="clob-funder-address">Polymarket Proxy 錢包地址 (POLY_FUNDER_ADDRESS，選填)</label>
-          <input type="text" id="clob-funder-address" placeholder="0x... (Polymarket 網頁右上角顯示的存款地址)" autocomplete="off" />
-          <small>若使用 Email/Magic 或瀏覽器錢包登入 Polymarket，請填入網頁上的 Proxy Address</small>
-        </div>
-
-        <div class="field-group">
-          <label for="clob-sig-type">簽名帳戶類型 (Signature Type)</label>
-          <select id="clob-sig-type">
-            <option value="1">1 - Polymarket Proxy / Email / Magic Wallet (最常見)</option>
-            <option value="2">2 - Gnosis Safe Proxy (新式瀏覽器錢包代理)</option>
-            <option value="0">0 - 標準 EOA 錢包直接交易 (直接持有 USDC.e)</option>
-          </select>
-        </div>
-
-        <div class="field-row-3">
-          <div class="field-group">
-            <label for="clob-api-key">L2 API Key (選填，可自動推導)</label>
-            <input type="text" id="clob-api-key" placeholder="留空將由私鑰自動生成" autocomplete="off" />
-          </div>
-          <div class="field-group">
-            <label for="clob-api-secret">L2 API Secret (選填)</label>
-            <input type="password" id="clob-api-secret" placeholder="留空自動生成" autocomplete="off" />
-          </div>
-          <div class="field-group">
-            <label for="clob-api-passphrase">L2 Passphrase (選填)</label>
-            <input type="password" id="clob-api-passphrase" placeholder="留空自動生成" autocomplete="off" />
-          </div>
+          <label>📋 本場即將發送之 Telegram 投注策略報文即時預覽</label>
+          <pre id="hkjc-tg-preview-box" class="mono-num" style="background:#090d16;border:1px solid #1f2d46;border-radius:8px;padding:10px 12px;font-size:11.5px;color:#d1fae5;white-space:pre-wrap;max-height:220px;overflow-y:auto;"></pre>
         </div>
 
         <div class="modal-footer">
-          <button type="button" id="verify-clob-btn" class="btn btn-secondary">
-            🔍 測試 CLOB 連線與憑證
-          </button>
-          <button type="submit" class="btn btn-primary">
-            💾 儲存憑證設定
-          </button>
+          <button type="button" id="test-tg-push-btn" class="btn btn-secondary">📨 儲存並立即發送本場策略至 Telegram</button>
+          <button type="submit" class="btn btn-primary">💾 儲存綁定</button>
         </div>
       </form>
     </div>
   </dialog>
 
-  <!-- Native Modal 2: Vercel + Railway Architecture & Cost Saving Guide -->
-  <dialog id="deploy-modal" class="modal-dialog" closedby="any">
-    <div class="modal-content">
-      <div class="modal-header">
-        <div>
-          <h3>☁️ Vercel 整合與 24/7 毫秒級監測省錢架構指南</h3>
-          <p class="modal-subtitle">如何把多個專案合併成單一後端並搭配免費 Vercel 網域</p>
-        </div>
-        <button type="button" id="close-deploy-modal-btn" class="btn-icon" aria-label="關閉視窗">✕</button>
-      </div>
-
-      <div class="modal-body deploy-steps">
-        <div class="step-card">
-          <h4>1. 為什麼純 Vercel 免費版無法單獨做「24/7 毫秒級下單」？</h4>
-          <p style="font-size:12.5px;color:#cbd5e1;">
-            Vercel 是 Serverless（無伺服器函數）架構：當沒有人打開網頁時，容器會立即休眠；且 Vercel Hobby 免費版的 Cron Job <strong>每天只能觸發 1 次</strong>（Pro 付費版 $20/月也只能每分鐘 1 次），無法維持 24 小時每秒輪詢盤口或長連線 WebSocket。
-          </p>
-        </div>
-
-        <div class="step-card">
-          <h4>2. 最省錢的做法：二合一單一引擎 + Vercel 免費前端整合</h4>
-          <ol>
-            <li><strong>合併後端（省下一半費用）</strong>：現在「香港氣溫 70%+ 交易 (`hk-temp-trading`)」與「運動 70%+ 交易 (`polysports`)」已經<strong>完全整合在同一個畫面與同一個伺服器程序</strong>中！您可以把舊的獨立氣溫後端停用，只需保留一個實例即可同時跑兩個策略。</li>
-            <li><strong>掛載到您的 Vercel 專案</strong>：本倉庫已內建 <code>vercel.json</code> 反向代理設定，您可以直接在 Vercel 綁定 <code>jimlau0115/polysports-autobot</code>，統一用 Vercel 網址存取！</li>
-          </ol>
-        </div>
-      </div>
-    </div>
-  </dialog>
-
-  <script src="/static/app.js?v=20261122_v8" defer></script>
+  <script src="/static/app.js?v=20261122_hkjc_v4" defer></script>
 </body>
 </html>
