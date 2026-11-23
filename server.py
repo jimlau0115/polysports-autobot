@@ -635,10 +635,13 @@ class PolySportsServer:
         try:
             results = []
             for r in list(self.engine.hkjc.races):
-                if r["status"] != "SETTLED":
+                has_res = any(ru.get("_actual_final_pos") == 1 for ru in r.get("runners", []))
+                if r["status"] != "SETTLED" and has_res:
                     res = self.engine.hkjc.settle_race_and_evolve(race_id=r["race_id"])
                     await self.engine.hkjc.auto_push_after_settlement(res)
                     results.append(res)
+            if not results:
+                raise ValueError("目前尚無已公佈正式賽果之待結算場次（系統將於完賽後自動結算並進化）。")
             raw_state = self.engine.get_full_state()
             await self.broadcast_ws({"type": "STATE_UPDATE", "data": raw_state})
             return web.json_response(

@@ -112,15 +112,23 @@
     }
 
     const nextOpenRace = races.find((r) => r.status !== "SETTLED");
+    const anyReadyToSettle = races.some((r) => r.status !== "SETTLED" && r.has_official_result);
     const settleNextBtn = $("hkjc-settle-next-btn");
     if (settleNextBtn) {
-      if (nextOpenRace) {
+      if (!nextOpenRace) {
+        settleNextBtn.disabled = true;
+        settleNextBtn.textContent = `✅ 全日 ${races.length} 場均已結算並完成進化`;
+      } else if (nextOpenRace.has_official_result) {
         settleNextBtn.disabled = false;
         settleNextBtn.textContent = `🏁 結算第 ${nextOpenRace.race_no} 場賽果 & 自動升級`;
       } else {
         settleNextBtn.disabled = true;
-        settleNextBtn.textContent = `✅ 全日 ${races.length} 場均已結算並完成進化`;
+        settleNextBtn.textContent = `⏳ 待第 ${nextOpenRace.race_no} 場 (${nextOpenRace.scheduled_time}) 完賽自動結算`;
       }
+    }
+    const settleAllBtn = $("hkjc-settle-all-btn");
+    if (settleAllBtn) {
+      settleAllBtn.disabled = !anyReadyToSettle;
     }
 
     // 2. 4-Card Executive KPI Strip
@@ -257,9 +265,12 @@
       if (selectedRace.status === "SETTLED") {
         settleCurrBtn.disabled = true;
         settleCurrBtn.textContent = `✅ 第 ${selectedRace.race_no} 場已完賽並升級`;
-      } else {
+      } else if (selectedRace.has_official_result) {
         settleCurrBtn.disabled = false;
         settleCurrBtn.textContent = `🏁 結算第 ${selectedRace.race_no} 場賽果並升級`;
+      } else {
+        settleCurrBtn.disabled = true;
+        settleCurrBtn.textContent = `⏳ 待第 ${selectedRace.race_no} 場完賽公佈派彩後自動結算`;
       }
     }
 
@@ -786,10 +797,11 @@
         const cleanSel = String(b.selection_label || "").split(" (")[0].trim();
         lines.push(`• ${pName}：${cleanSel} — 注碼 ${fmtHkd(b.stake_hkd)}`);
       });
-    } else if ((race.exotic_recommendations || []).length > 0) {
-      const ex = race.exotic_recommendations[0];
-      const pName = poolMap[ex.pool_type] || ex.pool_label;
-      lines.push(`• ${pName}：${ex.selection_label} — 注碼 ${fmtHkd(ex.rec_stake_hkd)}`);
+    } else if ((race.recommended_bets_preview || []).length > 0) {
+      race.recommended_bets_preview.forEach((item) => {
+        const pName = poolMap[item.pool_type] || item.pool_label || item.pool_type;
+        lines.push(`• ${pName}：${item.selection_label} — 注碼 ${fmtHkd(item.stake_hkd)}`);
+      });
     } else {
       lines.push(`• 本場無達標正期望值注項（建議觀望）`);
     }

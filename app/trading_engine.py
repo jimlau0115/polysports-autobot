@@ -73,96 +73,12 @@ class TradingEngine:
         async with self._lock:
             self.is_scanning = True
             t0 = time.perf_counter()
-            cfg = self.db.get_config()
-            data_mode = cfg.get("data_source_mode", "AUTO")
-            trading_mode = cfg.get("trading_mode", "PAPER")
+            trading_mode = self.db.get_config().get("trading_mode", "PAPER")
 
-            try:
-                markets, source = await self.poly_client.fetch_sports_markets(mode=data_mode)
-                self.active_data_source = source
-            except Exception as exc:
-                self.active_data_source = "ERROR"
-                self.db.add_log(
-                    level="WARN",
-                    trading_mode=trading_mode,
-                    message=f"取得 Polymarket 運動盤口失敗 ({data_mode}): {exc}",
-                )
-                markets = self.latest_markets
-
-            # 1. Update open positions mark-to-market & evaluate TP/SL
-            await self._update_and_check_open_positions(markets, cfg)
-
-            # 2. Evaluate each market against the 70%+ rule & risk controls
-            annotated_markets = []
-            qualified_candidates = []
-
-            for m in markets:
-                paper_eval = self._evaluate_market(m, cfg, trading_mode="PAPER")
-                live_eval = self._evaluate_market(m, cfg, trading_mode="LIVE")
-                eval_info = live_eval if trading_mode == "LIVE" else paper_eval
-                m_copy = dict(m)
-                m_copy["paper_rule_evaluation"] = paper_eval
-                m_copy["live_rule_evaluation"] = live_eval
-                m_copy["rule_evaluation"] = eval_info
-                annotated_markets.append(m_copy)
-                if eval_info["eligible"]:
-                    qualified_candidates.append((m_copy, eval_info))
-
-            # Sort markets strictly from soonest ending to latest ending (由最快結束到最遲結束排序)
-            annotated_markets.sort(
-                key=lambda x: (
-                    parse_end_date_ts(x.get("end_date", "")),
-                    -x["top_outcome"]["prob"],
-                )
-            )
-            self.latest_markets = annotated_markets
-
-            # 3. If bot is enabled, prioritize betting on the soonest-ending events first (最接近結束的賽事優先投注)
-            new_bets = []
-            if cfg.get("bot_enabled", True) and qualified_candidates:
-                qualified_candidates.sort(
-                    key=lambda pair: (
-                        parse_end_date_ts(pair[0].get("end_date", "")),
-                        -pair[0]["top_outcome"]["prob"],
-                    )
-                )
-                for m_cand, eval_info in qualified_candidates:
-                    placed = await self._attempt_auto_bet(m_cand, eval_info, cfg)
-                    if placed:
-                        new_bets.append(placed)
-                        # Refresh config & evaluation badge after bet
-                        cfg = self.db.get_config()
-                        m_cand["paper_rule_evaluation"] = self._evaluate_market(m_cand, cfg, trading_mode="PAPER")
-                        m_cand["live_rule_evaluation"] = self._evaluate_market(m_cand, cfg, trading_mode="LIVE")
-                        m_cand["rule_evaluation"] = (
-                            m_cand["live_rule_evaluation"]
-                            if cfg.get("trading_mode", "PAPER") == "LIVE"
-                            else m_cand["paper_rule_evaluation"]
-                        )
-
-            # 4. Also scan and evaluate Hong Kong Daily Temperature 70%+ Auto-Trading
-            try:
-                await self.hk_temp.scan_and_evaluate()
-            except Exception as exc:
-                self.db.add_log(
-                    level="WARN",
-                    trading_mode=trading_mode,
-                    message=f"香港氣溫市場掃描異常: {exc}",
-                )
-
-            # 5. Scan and evaluate Passive Market Making & Liquidity Rewards ($500 LP Engine)
-            try:
-                await self.lp_mm.scan_and_evaluate()
-            except Exception as exc:
-                self.db.add_log(
-                    level="WARN",
-                    trading_mode=trading_mode,
-                    message=f"被動做市引擎掃描異常: {exc}",
-                )
-
-            # 6. Check HKJC Self-Evolving Quant Engine auto-progression loop
+            # Execute HKJC Self-Evolving Quant Engine auto-progression & T-5m late-window lock loop
             try:
                 await self.hkjc.maybe_auto_progress()
+                self.active_data_source = self.hkjc.sync_source
             except Exception as exc:
                 self.db.add_log(
                     level="WARN",

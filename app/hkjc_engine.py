@@ -941,8 +941,12 @@ class HkjcQuantEngine:
                         if force_refresh_cards or not self._get_cache(rc_cache_key):
                             rc_tasks.append(self._fetch_and_cache_racecard(session, slash_date, venue, r_no, rc_cache_key))
                         lr_cache_key = f"lr_{m_date}_{venue}_{r_no}"
+                        existing_lr = self._get_cache(lr_cache_key)
                         if gr.get("status") in ("RESULT", "INTERIM", "CLOSED") and (
-                            force_refresh_cards or not self._get_cache(lr_cache_key)
+                            force_refresh_cards
+                            or not existing_lr
+                            or not existing_lr.get("perf_by_no")
+                            or not existing_lr.get("incidents_by_no")
                         ):
                             lr_tasks.append(self._fetch_and_cache_local_results(session, slash_date, venue, r_no, lr_cache_key))
 
@@ -1101,6 +1105,18 @@ class HkjcQuantEngine:
             "total_investment_hkd": float(meeting.get("totalInvestment") or 0.0),
             "penetrometer": penetrometer,
         }
+
+        # Audit Fix: When rolling over to a new race meeting date, reset the Fast Intraday Layer
+        # (day_draw_bias, day_pace_bias, intraday_jockey_form, intraday_trainer_form) while
+        # preserving the Slow Structural Layer (weights, theta_2, theta_3) & Stewards' Incidents!
+        m_state = self.get_model_state()
+        if m_state.get("active_meeting_date") != m_date:
+            m_state["active_meeting_date"] = m_date
+            m_state["day_draw_bias"] = 0.0
+            m_state["day_pace_bias"] = 0.0
+            m_state["intraday_jockey_form"] = {}
+            m_state["intraday_trainer_form"] = {}
+            self._save_model_state(m_state)
 
         settled_db_map = self._load_settled_results_map()
 
@@ -2011,6 +2027,102 @@ class HkjcQuantEngine:
 
         exotic_recs.sort(key=lambda x: (x["benter2_prob"] * 0.70 + (x["ev_pct"] / 100.0) * 0.30), reverse=True)
         race["exotic_recommendations"] = exotic_recs[:3]
+        race["recommended_bets_preview"] = self._build_strategy_preview_items(race, cfg, bankroll)
+
+    def _build_strategy_preview_items(
+        self, race: Dict[str, Any], cfg: Dict[str, Any], bankroll: float
+    ) -> List[Dict[str, Any]]:
+        """
+        Builds the unified candidate list of +EV bets (Win, Place, Exotic) for a race,
+        used both by the pre-window UI/Telegram preview and by the T-5m final lock.
+        """
+        max_race_budget = bankroll * (float(cfg.get("max_race_exposure_pct", 8.0)) / 100.0)
+        min_ev = float(cfg.get("min_ev_win_pct", 5.0))
+        ranked_runners = sorted(race.get("runners") or [], key=lambda x: x["benter2_prob"], reverse=True)
+        preview_items: List[Dict[str, Any]] = []
+        race_staked = 0.0
+        win_bet_horse_no: Optional[int] = None
+        single_bet_horses = set()
+
+        win_candidates = sorted(
+            [
+                r
+                for r in ranked_runners[:3]
+                if r["win_ev_pct"] >= min_ev
+                and r["rec_win_stake_hkd"] >= 100.0
+                and 1.4 <= r["market_win_odds"] <= 18.0
+                and r["benter2_prob"] >= 0.14
+            ],
+            key=lambda x: (x["benter2_prob"] * 0.70 + (x["win_ev_pct"] / 100.0) * 0.30),
+            reverse=True,
+        )
+        for r in win_candidates[:1]:
+            stake = min(r["rec_win_stake_hkd"], max(0.0, max_race_budget - race_staked))
+            if stake >= 100.0:
+                preview_items.append(
+                    {
+                        "pool_type": "WIN",
+                        "pool_label": "獨贏",
+                        "selection_key": str(r["horse_no"]),
+                        "selection_label": f"#{r['horse_no']} {r['horse_name_ch']}",
+                        "stake_hkd": stake,
+                        "ev_pct": r["win_ev_pct"],
+                    }
+                )
+                win_bet_horse_no = r["horse_no"]
+                single_bet_horses.add(int(r["horse_no"]))
+                race_staked += stake
+
+        place_candidates = sorted(
+            [
+                r
+                for r in ranked_runners[:4]
+                if r["horse_no"] != win_bet_horse_no
+                and r["place_ev_pct"] >= min_ev
+                and r["rec_place_stake_hkd"] >= 100.0
+                and r["benter2_place_prob"] >= 0.36
+                and 1.2 <= r["market_place_odds"] <= 6.5
+            ],
+            key=lambda x: (x["benter2_place_prob"] * 0.75 + (x["place_ev_pct"] / 100.0) * 0.25),
+            reverse=True,
+        )
+        for r in place_candidates[:1]:
+            stake = min(r["rec_place_stake_hkd"], max(0.0, max_race_budget - race_staked))
+            if stake >= 100.0:
+                preview_items.append(
+                    {
+                        "pool_type": "PLACE",
+                        "pool_label": "位置",
+                        "selection_key": str(r["horse_no"]),
+                        "selection_label": f"#{r['horse_no']} {r['horse_name_ch']}",
+                        "stake_hkd": stake,
+                        "ev_pct": r["place_ev_pct"],
+                    }
+                )
+                single_bet_horses.add(int(r["horse_no"]))
+                race_staked += stake
+
+        if cfg.get("enable_exotic_bets", True) and race.get("exotic_recommendations"):
+            for top_ex in race["exotic_recommendations"][:1]:
+                pair_nos = {int(x) for x in top_ex["selection_key"].split("-") if x.isdigit()}
+                overlap_cnt = len(pair_nos.intersection(single_bet_horses))
+                corr_discount = 0.68 if overlap_cnt >= 1 else 1.0
+                raw_ex_stake = round(top_ex["rec_stake_hkd"] * corr_discount, -1)
+                stake = min(raw_ex_stake, max(0.0, max_race_budget - race_staked))
+                if stake >= 100.0:
+                    preview_items.append(
+                        {
+                            "pool_type": top_ex["pool_type"],
+                            "pool_label": "連贏" if top_ex["pool_type"] == "QUINELLA" else "位置Q",
+                            "selection_key": top_ex["selection_key"],
+                            "selection_label": top_ex["selection_label"],
+                            "stake_hkd": stake,
+                            "ev_pct": top_ex["ev_pct"],
+                        }
+                    )
+                    race_staked += stake
+
+        return preview_items
 
     def _get_current_bankroll_hkd(self, cfg: Optional[Dict[str, Any]] = None) -> float:
         if cfg is None:
@@ -2269,16 +2381,21 @@ class HkjcQuantEngine:
         if race["status"] == "SETTLED":
             raise ValueError(f"第 {race['race_no']} 場已完賽結算，無法再新增注單")
 
-        stake_hkd = max(10.0, round(float(stake_hkd), 0))
-        bankroll = self._get_current_bankroll_hkd()
+        cfg = self.get_config()
+        single_cap = float(cfg.get("single_bet_cap_hkd", 3000.0))
+        stake_hkd = min(single_cap, max(10.0, round(float(stake_hkd), 0)))
+        bankroll = self._get_current_bankroll_hkd(cfg)
         if stake_hkd > bankroll:
             raise ValueError(f"可用資金不足 (目前可用 HK${bankroll:,.0f})")
 
         model_ver = self.get_model_state()["version"]
         pool_type = pool_type.upper()
+        if pool_type == "PLACE_QUINELLA" and len(race["runners"]) < 7:
+            raise ValueError("本場出賽馬匹少於 7 匹，香港馬會不設位置Q (QPL) 彩池")
 
         if pool_type in ("WIN", "PLACE"):
             horse_no = int(selection_key)
+            selection_key = str(horse_no)
             runner = next((ru for ru in race["runners"] if ru["horse_no"] == horse_no), None)
             if not runner:
                 raise ValueError(f"找不到馬匹 #{horse_no}")
@@ -2324,6 +2441,14 @@ class HkjcQuantEngine:
             c_odds = m_odds
             p_lbl = "連贏 QIN" if pool_type == "QUINELLA" else "位置Q QPL"
             label = f"#{h1} {r1['horse_name_ch']} × #{h2} {r2['horse_name_ch']} ({p_lbl})"
+
+        with self.db._connect() as conn:
+            dup = conn.execute(
+                "SELECT id FROM hkjc_paper_bets WHERE race_id = ? AND pool_type = ? AND selection_key = ? AND status = 'OPEN' LIMIT 1",
+                (race_id, pool_type, selection_key),
+            ).fetchone()
+            if dup:
+                raise ValueError(f"已存在相同的未結算注單：{label}")
 
         return self._insert_paper_bet(
             race_id=race_id,
@@ -2427,16 +2552,18 @@ class HkjcQuantEngine:
                 race_staked_hkd += stake
                 won = False
                 div_per_10 = 0.0
+                win_map = dividends.get("WIN_MAP") or {str(winner_no): dividends["WIN"]["dividend_per_10"]}
+                qin_map = dividends.get("QUINELLA_MAP") or {top2_key: dividends["QUINELLA"]["dividend_per_10"]}
 
-                if p_type == "WIN" and int(s_key) == winner_no:
+                if p_type == "WIN" and str(int(s_key)) in win_map:
                     won = True
-                    div_per_10 = _parse_div_float(dividends["WIN"]["dividend_per_10"], 0.0)
+                    div_per_10 = _parse_div_float(win_map.get(str(int(s_key))), 0.0)
                 elif p_type == "PLACE" and str(int(s_key)) in dividends["PLACE"]:
                     won = True
                     div_per_10 = _parse_div_float(dividends["PLACE"].get(str(int(s_key))), 15.0)
-                elif p_type == "QUINELLA" and s_key == top2_key:
+                elif p_type == "QUINELLA" and s_key in qin_map:
                     won = True
-                    div_per_10 = _parse_div_float(dividends["QUINELLA"]["dividend_per_10"], 0.0)
+                    div_per_10 = _parse_div_float(qin_map.get(s_key), 0.0)
                 elif p_type == "PLACE_QUINELLA" and s_key in dividends["PLACE_QUINELLA"] and s_key in pq_keys:
                     won = True
                     div_per_10 = _parse_div_float(dividends["PLACE_QUINELLA"].get(s_key), 25.0)
@@ -2516,11 +2643,15 @@ class HkjcQuantEngine:
         race["status"] = "SETTLED"
         race["settlement"] = settlement_payload
 
-        # 5. Refresh stale open AUTO_KELLY bets on remaining races & recompute with the NEWLY UPGRADED model!
+        # 5. Refresh stale open AUTO_KELLY bets on remaining races (that have NOT already been final-locked & pushed)
+        # & recompute with the NEWLY UPGRADED model!
         with self.db._connect() as conn:
-            conn.execute(
-                "DELETE FROM hkjc_paper_bets WHERE status = 'OPEN' AND trigger_source = 'AUTO_KELLY'"
-            )
+            for rem_r in self.races:
+                if rem_r["status"] != "SETTLED" and not self._has_final_locked_push(rem_r["race_id"]):
+                    conn.execute(
+                        "DELETE FROM hkjc_paper_bets WHERE race_id = ? AND status = 'OPEN' AND trigger_source = 'AUTO_KELLY'",
+                        (rem_r["race_id"],),
+                    )
         self._recompute_all_races()
         if self.get_config().get("auto_paper_bet_enabled", True):
             self.auto_place_paper_bets_for_open_races()
@@ -2637,12 +2768,19 @@ class HkjcQuantEngine:
         t_no = int(t_item["horse_no"])
         f_no = int(f_item["horse_no"])
 
-        # Parse official HKJC dividends from GraphQL `divs_raw`
+        # Parse official HKJC dividends from GraphQL `divs_raw` (including Dead-Heat support)
         place_pays_three = len(runners) >= 7
         win_div_10 = round(float(w_item["market_win_odds"]) * 10.0, 1)
+        win_divs_map: Dict[str, float] = {}
         for d in divs_raw.get("WIN") or []:
-            if int(re.sub(r"\D", "", str(d.get("winComb", "0"))) or 0) == w_no:
-                win_div_10 = _parse_div_float(d.get("div"), win_div_10)
+            c_no = int(re.sub(r"\D", "", str(d.get("winComb", "0"))) or 0)
+            if c_no > 0:
+                parsed_w = _parse_div_float(d.get("div"), win_div_10)
+                win_divs_map[str(c_no)] = parsed_w
+                if c_no == w_no:
+                    win_div_10 = parsed_w
+        if str(w_no) not in win_divs_map:
+            win_divs_map[str(w_no)] = win_div_10
 
         place_divs: Dict[str, float] = {}
         for d in divs_raw.get("PLA") or []:
@@ -2657,10 +2795,17 @@ class HkjcQuantEngine:
 
         q_key = f"{min(w_no, s_no)}-{max(w_no, s_no)}"
         q_div_10 = round((race.get("_qin_odds_map", {}).get(q_key) or 25.0) * 10.0, 1)
+        qin_divs_map: Dict[str, float] = {}
         for d in divs_raw.get("QIN") or []:
             parts = [int(x) for x in str(d.get("winComb", "")).split(",") if x.isdigit()]
-            if len(parts) == 2 and f"{min(parts[0], parts[1])}-{max(parts[0], parts[1])}" == q_key:
-                q_div_10 = _parse_div_float(d.get("div"), q_div_10)
+            if len(parts) == 2:
+                k_pair = f"{min(parts[0], parts[1])}-{max(parts[0], parts[1])}"
+                parsed_q = _parse_div_float(d.get("div"), q_div_10)
+                qin_divs_map[k_pair] = parsed_q
+                if k_pair == q_key:
+                    q_div_10 = parsed_q
+        if q_key not in qin_divs_map:
+            qin_divs_map[q_key] = q_div_10
 
         pq_divs: Dict[str, float] = {}
         if place_pays_three:
@@ -2693,8 +2838,10 @@ class HkjcQuantEngine:
             "full_order": full_order,
             "dividends": {
                 "WIN": {"horse_no": w_no, "horse_name": w_item["horse_name_ch"], "dividend_per_10": win_div_10},
+                "WIN_MAP": win_divs_map,
                 "PLACE": place_divs,
                 "QUINELLA": {"combination": q_key, "dividend_per_10": q_div_10},
+                "QUINELLA_MAP": qin_divs_map,
                 "PLACE_QUINELLA": pq_divs,
             },
         }
@@ -3186,7 +3333,7 @@ class HkjcQuantEngine:
             return None
 
         # 2. If the meeting is currently LIVE (at least one race is still OPEN/DEFINED on HKJC),
-        # automatically settle any earlier race that has official results on HKJC!
+        # automatically settle any earlier race that has OFFICIAL DIVIDENDS & RESULTS on HKJC!
         has_future_open_on_hkjc = any(
             r.get("hkjc_status") in ("OPEN", "DEFINED", "CLOSED", "INTERIM", "DECLARED")
             and not any(ru.get("_actual_final_pos") == 1 for ru in r["runners"])
@@ -3194,7 +3341,8 @@ class HkjcQuantEngine:
         )
         if has_future_open_on_hkjc:
             for r in self.races:
-                if r["status"] != "SETTLED" and any(ru.get("_actual_final_pos") == 1 for ru in r["runners"]):
+                has_win_div = bool((r.get("_official_divs_raw") or {}).get("WIN")) or r.get("hkjc_status") == "RESULT"
+                if r["status"] != "SETTLED" and has_win_div and any(ru.get("_actual_final_pos") == 1 for ru in r["runners"]):
                     res = self.settle_race_and_evolve(r["race_id"])
                     await self.auto_push_after_settlement(res)
                     return res
@@ -3228,7 +3376,9 @@ class HkjcQuantEngine:
         if new_token and "..." not in new_token:
             curr["bot_token"] = new_token
         if "chat_id" in updates:
-            curr["chat_id"] = str(updates.get("chat_id") or "").strip()
+            cand_chat = str(updates.get("chat_id") or "").strip()
+            if cand_chat:
+                curr["chat_id"] = cand_chat
         if "enabled" in updates:
             curr["enabled"] = bool(updates["enabled"])
         if "auto_push_pre_race" in updates:
@@ -3279,21 +3429,13 @@ class HkjcQuantEngine:
                 clean_sel = str(b["selection_label"]).split(" (")[0].strip()
                 lines.append(f"• {p_name}：{clean_sel} — 注碼 HK${b['stake_hkd']:,.0f}")
         else:
-            ex_recs = race.get("exotic_recommendations") or []
-            if ex_recs:
-                ex = ex_recs[0]
-                p_name = pool_label_map.get(ex["pool_type"], ex["pool_label"])
-                lines.append(f"• {p_name}：{ex['selection_label']} — 注碼 HK${ex['rec_stake_hkd']:,.0f}")
+            preview_items = race.get("recommended_bets_preview") or []
+            if preview_items:
+                for item in preview_items:
+                    p_name = pool_label_map.get(item["pool_type"], item.get("pool_label", item["pool_type"]))
+                    lines.append(f"• {p_name}：{item['selection_label']} — 注碼 HK${item['stake_hkd']:,.0f}")
             else:
-                ranked = sorted(race.get("runners") or [], key=lambda x: x["benter2_prob"], reverse=True)
-                if ranked and ranked[0]["rec_win_stake_hkd"] >= 100:
-                    r0 = ranked[0]
-                    lines.append(f"• 獨贏：#{r0['horse_no']} {r0['horse_name_ch']} — 注碼 HK${r0['rec_win_stake_hkd']:,.0f}")
-                elif ranked and ranked[0]["rec_place_stake_hkd"] >= 100:
-                    r0 = ranked[0]
-                    lines.append(f"• 位置：#{r0['horse_no']} {r0['horse_name_ch']} — 注碼 HK${r0['rec_place_stake_hkd']:,.0f}")
-                else:
-                    lines.append("• 本場無達標正期望值注項（建議觀望）")
+                lines.append("• 本場無達標正期望值注項（建議觀望）")
 
         return "\n".join(lines)
 
@@ -3569,6 +3711,10 @@ class HkjcQuantEngine:
                 win_label = "🎯 已進入開跑前 1–5 分鐘黃金決策窗口（即時鎖定聰明錢與落飛）"
 
             rc = {k: v for k, v in r.items() if not k.startswith("_")}
+            rc["has_official_result"] = bool(
+                any(ru.get("_actual_final_pos") == 1 for ru in r.get("runners", []))
+                and (r.get("hkjc_status") == "RESULT" or bool((r.get("_official_divs_raw") or {}).get("WIN")))
+            )
             rc["execution_window_status"] = win_status
             rc["execution_window_label"] = win_label
             rc["runners"] = [
