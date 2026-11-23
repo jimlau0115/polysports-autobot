@@ -1187,8 +1187,11 @@ class HkjcQuantEngine:
                 # Live Odds from WIN & PLA pools
                 w_node = win_nodes.get(h_no) or {}
                 p_node = pla_nodes.get(h_no) or {}
-                win_odds_str = str(w_node.get("oddsValue") or ru.get("winOdds") or "10.0")
-                pla_odds_str = str(p_node.get("oddsValue") or "")
+                raw_w_odds = w_node.get("oddsValue") or ru.get("winOdds")
+                raw_p_odds = p_node.get("oddsValue")
+                has_live_win_odds = bool(raw_w_odds)
+                win_odds_str = str(raw_w_odds or "10.0")
+                pla_odds_str = str(raw_p_odds or "")
                 try:
                     market_win_odds = max(1.01, float(win_odds_str))
                 except Exception:
@@ -1285,11 +1288,39 @@ class HkjcQuantEngine:
                         "pla_odds_drop_pct": round(pla_odds_drop_pct, 1),
                         "hot_favourite": hot_fav,
                         "qin_marginal_prob": round(qin_marginal_support.get(h_no, 0.0) / 2.0, 4),
+                        "_has_live_win_odds": has_live_win_odds,
                         # Actual official result fields (kept separate from pre-race features!)
                         "_actual_final_pos": int(ru["finalPosition"]) if str(ru.get("finalPosition", "")).isdigit() and int(ru["finalPosition"]) > 0 else None,
                         "_actual_dead_heat": bool(ru.get("deadHeat")),
                     }
                 )
+
+            # If HKJC tote pools have not opened yet for this declared race card (e.g. Monday/Tuesday morning),
+            # compute differentiated Morning-Line public reference odds from public form/draw/jockey/rating
+            if runners and not any(r.get("_has_live_win_odds") for r in runners):
+                ml_logits = []
+                avg_rt = sum(r["rating"] for r in runners) / len(runners)
+                for r in runners:
+                    j_pts = self.jkc_points.get(r["jockey"], 0.0)
+                    t_pts = self.tnc_points.get(r["trainer"], 0.0)
+                    # Public morning-line tendency: heavily weights recent form, inside draw & star jockey
+                    pub_u = (
+                        (r["form_score"] - 0.45) * 2.1
+                        + (avg_rt - r["rating"]) * -0.02
+                        - (r["draw"] - 6.5) * 0.075
+                        + (0.28 if j_pts >= 12 or r["jockey"] in ("潘頓", "麥道朗", "布文", "何澤堯") else 0.0)
+                        + (0.14 if t_pts >= 10 else 0.0)
+                    )
+                    ml_logits.append(pub_u)
+                max_ml = max(ml_logits)
+                ml_exps = [math.exp(u - max_ml) for u in ml_logits]
+                sum_ml = sum(ml_exps)
+                for idx_r, r in enumerate(runners):
+                    p_ml = max(0.012, ml_exps[idx_r] / sum_ml)
+                    ml_win = round(min(99.0, max(1.8, 0.825 / p_ml)), 1)
+                    ml_pla = round(min(25.0, max(1.15, 1.0 + (ml_win - 1.0) * 0.23)), 1)
+                    r["market_win_odds"] = ml_win
+                    r["market_place_odds"] = ml_pla
 
             # Attach real QIN and QPL pool odds maps to the race for exact exotic EV calculation
             race_obj: Dict[str, Any] = {
