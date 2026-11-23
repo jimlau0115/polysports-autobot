@@ -4,7 +4,7 @@ import math
 import os
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from html import unescape
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -355,6 +355,7 @@ RESULT_MEETINGS_QUERY = """fragment racingFoPoolFragment on RacingFoPool {
 DEFAULT_HKJC_CONFIG: Dict[str, Any] = {
     "auto_paper_bet_enabled": True,
     "auto_live_settle_enabled": True,    # Automatically settles newly completed HKJC races
+    "late_betting_window_minutes": 5.0,  # Lock final betting strategy & push TG 1–5 minutes before post time
     "initial_bankroll_hkd": 100000.0,
     "kelly_fraction": 0.25,              # Quarter Kelly for optimal variance control
     "min_ev_win_pct": 5.0,               # Minimum +EV (%) for Win / Place
@@ -464,6 +465,34 @@ def _parse_time_to_seconds(t_str: str) -> Optional[float]:
     return None
 
 
+def _compute_minutes_to_post(post_time_iso: str) -> Optional[float]:
+    """Computes minutes remaining until race postTime in Hong Kong Time (UTC+8)."""
+    if not post_time_iso:
+        return None
+    try:
+        dt = datetime.fromisoformat(post_time_iso.replace("Z", "+00:00"))
+        hkt_tz = timezone(timedelta(hours=8))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=hkt_tz)
+        now_hkt = datetime.now(hkt_tz)
+        return round((dt - now_hkt).total_seconds() / 60.0, 2)
+    except Exception:
+        return None
+
+
+def _format_minutes_countdown(mins: Optional[float]) -> str:
+    if mins is None:
+        return "待定"
+    if mins <= 0:
+        return "已到開跑時間"
+    total_m = int(round(mins))
+    if total_m >= 60:
+        hrs = total_m // 60
+        rem_m = total_m % 60
+        return f"{hrs}小時{rem_m}分" if rem_m > 0 else f"{hrs}小時"
+    return f"{max(1, total_m)}分鐘"
+
+
 def _parse_last6run(last6_str: str) -> Tuple[List[int], float, float]:
     """
     Parses HKJC last6run string like '4/7/5/9/5/6' or '2/1/1/1/1/1'.
@@ -560,6 +589,7 @@ class HkjcQuantEngine:
         self.last_sync_at: Optional[str] = None
         self.last_sync_ms: int = 0
         self.sync_source: str = "INITIALIZING"
+        self._last_gql_sync_mono: float = 0.0
         self._sync_lock = asyncio.Lock()
         cached_snap = self._get_cache("latest_gql_snapshot")
         if cached_snap and cached_snap.get("meeting"):
@@ -947,6 +977,7 @@ class HkjcQuantEngine:
             self._assemble_real_meeting(meeting, pools_by_race, divs_by_race)
             self.last_sync_at = utc_now_iso()
             self.last_sync_ms = int((time.perf_counter() - t0) * 1000)
+            self._last_gql_sync_mono = time.monotonic()
 
     async def _fetch_and_cache_racecard(
         self, session: aiohttp.ClientSession, slash_date: str, venue: str, race_no: int, cache_key: str
@@ -1322,6 +1353,14 @@ class HkjcQuantEngine:
                     r["market_win_odds"] = ml_win
                     r["market_place_odds"] = ml_pla
 
+            post_time_iso = (
+                post_time_raw
+                if len(post_time_raw) >= 19
+                else f"{m_date}T{scheduled_time or '18:40'}:00+08:00"
+            )
+            has_race_live_odds = any(r.get("_has_live_win_odds") for r in runners)
+            mins_to_post = _compute_minutes_to_post(post_time_iso)
+
             # Attach real QIN and QPL pool odds maps to the race for exact exotic EV calculation
             race_obj: Dict[str, Any] = {
                 "race_no": r_no,
@@ -1338,6 +1377,9 @@ class HkjcQuantEngine:
                 "prize_hkd": rc_cache.get("prize_hkd") or 1170000,
                 "pool_investment_hkd": round(race_inv_hkd, 0),
                 "scheduled_time": scheduled_time,
+                "post_time_iso": post_time_iso,
+                "has_live_odds": has_race_live_odds,
+                "minutes_to_post": mins_to_post,
                 "hkjc_status": gr.get("status") or "OPEN",
                 "runners": runners,
                 "_qin_odds_map": {
@@ -1364,11 +1406,19 @@ class HkjcQuantEngine:
             assembled_races.append(race_obj)
 
         self.races = assembled_races
-        # Audit Fix #1: Refresh open AUTO_KELLY bets when live odds update so stale early-bird odds never lock in
+        # Audit Fix #1 + Late-Window Execution Rule:
+        # Remove any premature OPEN AUTO_KELLY bets placed outside the 1–5 min pre-post window
+        # while preserving bets that were locked inside the T-5m window!
+        late_win_mins = float(self.get_config().get("late_betting_window_minutes", 5.0))
         with self.db._connect() as conn:
-            conn.execute(
-                "DELETE FROM hkjc_paper_bets WHERE status = 'OPEN' AND trigger_source = 'AUTO_KELLY'"
-            )
+            for r in self.races:
+                has_res = any(ru.get("_actual_final_pos") == 1 for ru in r["runners"])
+                m_post = r.get("minutes_to_post")
+                if not has_res and (not r.get("has_live_odds") or (m_post is not None and m_post > late_win_mins)):
+                    conn.execute(
+                        "DELETE FROM hkjc_paper_bets WHERE race_id = ? AND status = 'OPEN' AND trigger_source = 'AUTO_KELLY'",
+                        (r["race_id"],),
+                    )
         self._recompute_all_races()
         if self.get_config().get("auto_paper_bet_enabled", True):
             self.auto_place_paper_bets_for_open_races()
@@ -1979,19 +2029,30 @@ class HkjcQuantEngine:
             realized_pnl = float(row["realized_pnl"] or 0.0)
         return max(2000.0, initial_bk + realized_pnl - open_stake)
 
-    def auto_place_paper_bets_for_open_races(self) -> List[Dict[str, Any]]:
+    def auto_place_paper_bets_for_open_races(self, force_manual: bool = False) -> List[Dict[str, Any]]:
         """
-        Places optimal pre-race Paper Bets ONLY on the currently active open race (next_open_race)
-        so that when Race k finishes and upgrades the model, Race k+1's bets are generated
-        using the newly upgraded model v2.k!
+        Places optimal pre-race Paper Bets ONLY when:
+        1. The race is inside the 1–5 minute pre-post execution window (with live HKJC tote odds), OR
+        2. The race already has official HKJC results (for walk-forward backtest verification), OR
+        3. The user explicitly clicked the manual force-deploy button (`force_manual=True`).
         """
         cfg = self.get_config()
-        if not cfg.get("auto_paper_bet_enabled", True):
+        if not force_manual and not cfg.get("auto_paper_bet_enabled", True):
             return []
 
         next_open = next((r for r in self.races if r["status"] != "SETTLED"), None)
         if not next_open:
             return []
+
+        mins = _compute_minutes_to_post(next_open.get("post_time_iso", ""))
+        next_open["minutes_to_post"] = mins
+        has_official_result = any(ru.get("_actual_final_pos") == 1 for ru in next_open["runners"])
+        late_win_mins = float(cfg.get("late_betting_window_minutes", 5.0))
+
+        if not force_manual and not has_official_result:
+            # Do NOT lock in paper bets before HKJC opens live pools or more than 5 minutes before post time!
+            if not next_open.get("has_live_odds") or mins is None or mins > late_win_mins or mins < -3.0:
+                return []
 
         return self._place_auto_bets_for_single_race(next_open, cfg)
 
@@ -3065,21 +3126,69 @@ class HkjcQuantEngine:
             self.auto_place_paper_bets_for_open_races()
         return self.get_state()
 
+    def _has_final_locked_push(self, race_id: str) -> bool:
+        with self.db._connect() as conn:
+            row = conn.execute(
+                "SELECT id FROM hkjc_telegram_logs WHERE race_id = ? AND msg_type = 'PRE_RACE_FINAL_LOCK' AND status IN ('SENT', 'QUEUED_PREVIEW') LIMIT 1",
+                (race_id,),
+            ).fetchone()
+            return bool(row)
+
     async def maybe_auto_progress(self) -> Optional[Dict[str, Any]]:
         """
-        Periodically syncs live HKJC GraphQL data.
-        During an active race meeting where some races are still OPEN/DEFINED and earlier races
-        have just transitioned to RESULT, automatically settles the newly finished races!
+        Periodically syncs live HKJC GraphQL data with adaptive frequency:
+        1. Syncs every 18s when any race is within [-35m, +12m] of post time, else every 60s.
+        2. When an upcoming race enters the 1–5 minute pre-post golden window (with live HKJC odds),
+           forces an immediate live odds sync, locks the final +EV strategy bets, and pushes to Telegram!
+        3. When an earlier race transitions to official results on HKJC, automatically settles it
+           and upgrades the model weights/biases for subsequent races!
         """
-        await self.sync_live_hkjc_data(force_refresh_cards=False)
         cfg = self.get_config()
+        late_win_mins = float(cfg.get("late_betting_window_minutes", 5.0))
+
+        for r in self.races:
+            r["minutes_to_post"] = _compute_minutes_to_post(r.get("post_time_iso", ""))
+
+        near_active_race = any(
+            r["status"] != "SETTLED"
+            and r.get("minutes_to_post") is not None
+            and -35.0 <= float(r["minutes_to_post"]) <= 12.0
+            for r in self.races
+        )
+        sync_interval = 18.0 if near_active_race else 60.0
+        if time.monotonic() - self._last_gql_sync_mono >= sync_interval or not self.races:
+            await self.sync_live_hkjc_data(force_refresh_cards=False)
+
+        # 1. Check if any race has just entered the 1–5 minute pre-post Golden Window
+        for r in list(self.races):
+            if r["status"] == "SETTLED":
+                continue
+            has_res = any(ru.get("_actual_final_pos") == 1 for ru in r["runners"])
+            mins = _compute_minutes_to_post(r.get("post_time_iso", ""))
+            r["minutes_to_post"] = mins
+            if not has_res and r.get("has_live_odds") and mins is not None and 0.0 <= mins <= late_win_mins:
+                if not self._has_final_locked_push(r["race_id"]):
+                    # Force one immediate fresh HKJC GraphQL sync right inside the T-5m window
+                    await self.sync_live_hkjc_data(force_refresh_cards=False)
+                    target_race = next((x for x in self.races if x["race_id"] == r["race_id"]), r)
+                    self._place_auto_bets_for_single_race(target_race, cfg)
+                    tg_cfg = self.get_telegram_config(mask_token=True)
+                    if tg_cfg.get("enabled", True):
+                        msg_text = self.format_race_strategy_telegram_message(target_race)
+                        await self.send_telegram_message(
+                            text=msg_text,
+                            race_id=target_race["race_id"],
+                            race_no=int(target_race["race_no"]),
+                            msg_type="PRE_RACE_FINAL_LOCK",
+                        )
+
         if not cfg.get("auto_live_settle_enabled", True):
             return None
 
-        # If the meeting is currently LIVE (i.e. at least one race is still OPEN/DEFINED on HKJC),
+        # 2. If the meeting is currently LIVE (at least one race is still OPEN/DEFINED on HKJC),
         # automatically settle any earlier race that has official results on HKJC!
         has_future_open_on_hkjc = any(
-            r.get("hkjc_status") in ("OPEN", "DEFINED", "CLOSED", "INTERIM")
+            r.get("hkjc_status") in ("OPEN", "DEFINED", "CLOSED", "INTERIM", "DECLARED")
             and not any(ru.get("_actual_final_pos") == 1 for ru in r["runners"])
             for r in self.races
         )
@@ -3195,6 +3304,23 @@ class HkjcQuantEngine:
         next_open = next((r for r in self.races if r["status"] != "SETTLED"), None)
         if not next_open:
             return None
+        has_res = any(ru.get("_actual_final_pos") == 1 for ru in next_open["runners"])
+        mins = _compute_minutes_to_post(next_open.get("post_time_iso", ""))
+        late_win_mins = float(self.get_config().get("late_betting_window_minutes", 5.0))
+        # For live upcoming races, wait until the 1–5 minute pre-post window rather than pushing 25–30m early!
+        if not has_res:
+            if not next_open.get("has_live_odds") or mins is None or mins > late_win_mins or mins < 0.0:
+                return None
+            if self._has_final_locked_push(next_open["race_id"]):
+                return None
+            self._place_auto_bets_for_single_race(next_open, self.get_config())
+            msg_text = self.format_race_strategy_telegram_message(next_open)
+            return await self.send_telegram_message(
+                text=msg_text,
+                race_id=next_open.get("race_id", ""),
+                race_no=int(next_open.get("race_no") or 0),
+                msg_type="PRE_RACE_FINAL_LOCK",
+            )
         msg_text = self.format_race_strategy_telegram_message(next_open)
         return await self.send_telegram_message(
             text=msg_text,
@@ -3420,9 +3546,31 @@ class HkjcQuantEngine:
         next_open_race = next((r for r in self.races if r["status"] != "SETTLED"), None)
 
         # Strip private internal keys (starting with '_') before serializing races to frontend
+        open_bet_race_ids = {b["race_id"] for b in bets if b.get("status") == "OPEN"}
+        late_win_mins = float(cfg.get("late_betting_window_minutes", 5.0))
         clean_races = []
         for r in self.races:
+            mins = _compute_minutes_to_post(r.get("post_time_iso", ""))
+            r["minutes_to_post"] = mins
+            if r["status"] == "SETTLED":
+                win_status = "SETTLED"
+                win_label = "🏁 已對比官方賽果並完成雙時間尺度自進化"
+            elif r["race_id"] in open_bet_race_ids or self._has_final_locked_push(r["race_id"]):
+                win_status = "LOCKED_IN_WINDOW"
+                win_label = "🔒 臨場 1–5 分鐘黃金窗口已鎖定最終策略（並已推播 TG）"
+            elif not r.get("has_live_odds"):
+                win_status = "PRE_POOL_OBSERVING"
+                win_label = f"⏳ 待馬會開售彩池（距開跑 {_format_minutes_countdown(mins)} · 將於開跑前 1–5 分鐘自動鎖單並推播 TG）"
+            elif mins is not None and mins > late_win_mins:
+                win_status = "OBSERVING_UNTIL_T5"
+                win_label = f"⏱️ 距開跑 {_format_minutes_countdown(mins)} · 暫定心水動態運算中（開跑前 1–5 分鐘自動鎖單並推播 TG）"
+            else:
+                win_status = "IN_T5_WINDOW"
+                win_label = "🎯 已進入開跑前 1–5 分鐘黃金決策窗口（即時鎖定聰明錢與落飛）"
+
             rc = {k: v for k, v in r.items() if not k.startswith("_")}
+            rc["execution_window_status"] = win_status
+            rc["execution_window_label"] = win_label
             rc["runners"] = [
                 {rk: rv for rk, rv in ru.items() if not rk.startswith("_")}
                 for ru in r.get("runners", [])

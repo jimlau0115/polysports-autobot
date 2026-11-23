@@ -26,10 +26,13 @@ class Database:
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_path), timeout=15.0)
+        conn = sqlite3.connect(str(self.db_path), timeout=20.0)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA synchronous=NORMAL;")
+        try:
+            conn.execute("PRAGMA journal_mode=MEMORY;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+        except sqlite3.OperationalError:
+            pass
         return conn
 
     def _init_db(self) -> None:

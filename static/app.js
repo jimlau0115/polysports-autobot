@@ -223,8 +223,10 @@
           if (r.status === "SETTLED") {
             const rPnl = Number(r.settlement?.comparison?.race_pnl_hkd || 0);
             badgeHtml = `<span class="badge ${rPnl >= 0 ? "badge-success" : "badge-danger"}" style="font-size:10px;">${rPnl >= 0 ? "✅ " : "🏁 "}${fmtHkd(rPnl, true)}</span>`;
+          } else if (r.execution_window_status === "LOCKED_IN_WINDOW" || r.execution_window_status === "IN_T5_WINDOW") {
+            badgeHtml = `<span class="badge badge-success" style="font-size:10px;">🔒 臨場鎖單</span>`;
           } else if (r.status === "BETTING_OPEN") {
-            badgeHtml = `<span class="badge badge-accent" style="font-size:10px;">🎯 當前分析</span>`;
+            badgeHtml = `<span class="badge badge-accent" style="font-size:10px;">⏱️ 開跑前1-5m鎖單</span>`;
           }
           return `
             <button
@@ -292,10 +294,13 @@
       ? `單場彩池投注額：HK$${(Number(race.pool_investment_hkd) / 1e6).toFixed(1)}M`
       : `總獎金：${fmtHkd(race.prize_hkd)}`;
 
+    const winLabel = race.execution_window_label || "🎯 賽前無未來函數量化定價中";
     const stBadge =
       race.status === "SETTLED"
         ? `<span class="badge badge-success">🏁 已對比官方賽果並完成自進化</span>`
-        : `<span class="badge badge-accent">🎯 賽前無未來函數量化定價中</span>`;
+        : race.execution_window_status === "LOCKED_IN_WINDOW" || race.execution_window_status === "IN_T5_WINDOW"
+        ? `<span class="badge badge-success">${escapeHtml(winLabel)}</span>`
+        : `<span class="badge badge-accent">${escapeHtml(winLabel)}</span>`;
 
     el.innerHTML = `
       <div class="race-header-top">
@@ -621,7 +626,7 @@
     }
 
     if (filtered.length === 0) {
-      listEl.innerHTML = `<div class="empty-cell">目前篩選條件下尚無注單</div>`;
+      listEl.innerHTML = `<div class="empty-cell">⏳ 系統已啟用「開跑前 1–5 分鐘臨場鎖單機制」：目前為賽前動態觀察期，將於每場開跑前 1–5 分鐘同步最新落飛與聰明錢後，自動鎖定最終注單並推播 Telegram！</div>`;
       return;
     }
 
@@ -1032,7 +1037,11 @@
       try {
         const res = await apiPost("/api/hkjc/auto-bet", {});
         renderHkjc(res.hkjc);
-        showToast(`🎯 已根據最新進化權重下達 ${res.placed_count} 筆 +EV 凱利策略注單！`);
+        if (res.placed_count > 0) {
+          showToast(`🎯 已於臨場黃金窗口鎖定 ${res.placed_count} 筆 +EV 凱利策略注單！`);
+        } else {
+          showToast("⏳ 目前距離開跑超過 5 分鐘（或馬會尚未開售彩池），系統將於每場開跑前 1–5 分鐘自動鎖定最終注單並推播 Telegram！");
+        }
       } catch (err) {
         showToast(`❌ ${err.message}`);
       }

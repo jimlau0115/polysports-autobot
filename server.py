@@ -594,7 +594,12 @@ class PolySportsServer:
 
     async def handle_hkjc_auto_bet(self, request: web.Request) -> web.Response:
         try:
-            placed = self.engine.hkjc.auto_place_paper_bets_for_open_races()
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            force_manual = bool(body.get("force_manual", False))
+            placed = self.engine.hkjc.auto_place_paper_bets_for_open_races(force_manual=force_manual)
             raw_state = self.engine.get_full_state()
             await self.broadcast_ws({"type": "STATE_UPDATE", "data": raw_state})
             return web.json_response(
