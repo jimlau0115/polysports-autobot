@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark" />
   <title>HKJC 顧鳴高 &amp; Bill Benter 2.0 實時賽馬量化分析與自進化系統</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261123_hkjc_v6" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261124_hkjc_v7" />
 </head>
 <body>
   <!-- =================================================================== -->
@@ -64,22 +64,43 @@
   <main class="dashboard-container">
     <!-- 1. Clean 4-Card Executive KPI Strip -->
     <section class="kpi-grid" aria-label="核心績效與模型自進化指標">
-      <!-- KPI 1: Paper Bankroll & Reset -->
+      <!-- KPI 1: Editable Paper Bankroll & Reset -->
       <article class="kpi-card">
-        <div class="kpi-header">
-          <span class="kpi-label">💰 模擬投注總淨值 (HKD)</span>
-          <div class="kpi-links">
-            <button type="button" id="hkjc-reset-day-btn" class="btn-link" title="重置本賽日注單並從第 1 場重新驗證，保留目前已進化的模型權重">重跑本賽日(保留模型)</button>
-            <span class="dot-sep">·</span>
-            <button type="button" id="hkjc-reset-all-btn" class="btn-link" title="完全重置注單與模型權重回初始 v2.0.0">重置回 v2.0</button>
+        <form id="hkjc-bankroll-form" action="/api/hkjc/bankroll" method="POST" aria-labelledby="hkjc-bankroll-label" class="kpi-bankroll-form">
+          <div class="kpi-header">
+            <label for="hkjc-kpi-equity-input" id="hkjc-bankroll-label" class="kpi-label">💰 模擬投注總淨值 (HKD)</label>
+            <div class="kpi-links">
+              <button type="button" id="hkjc-reset-day-btn" class="btn-link" title="重置本賽日注單並從第 1 場重新驗證，保留目前已進化的模型權重">重跑本賽日(保留模型)</button>
+              <span class="dot-sep">·</span>
+              <button type="button" id="hkjc-reset-all-btn" class="btn-link" title="完全重置注單與模型權重回初始 v2.0.0">重置回 v2.0</button>
+            </div>
           </div>
-        </div>
-        <div class="kpi-value mono-num" id="hkjc-kpi-equity">HK$100,000</div>
-        <div class="kpi-sub">
-          可用現金 <strong id="hkjc-kpi-cash" class="mono-num">HK$100,000</strong>
-          <span class="dot-sep">·</span>
-          未結算注額 <strong id="hkjc-kpi-open-stake" class="mono-num">HK$0</strong>
-        </div>
+          <div class="kpi-equity-input-row">
+            <span class="kpi-currency-prefix mono-num" aria-hidden="true">HK$</span>
+            <input
+              type="text"
+              id="hkjc-kpi-equity-input"
+              name="equity_hkd"
+              class="kpi-equity-input mono-num"
+              value="100,000"
+              inputmode="numeric"
+              pattern="[0-9,]*"
+              enterkeyhint="done"
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="none"
+              spellcheck="false"
+              aria-describedby="hkjc-bankroll-help"
+              required
+            />
+            <button type="submit" id="hkjc-save-bankroll-btn" class="btn btn-primary btn-sm">套用</button>
+          </div>
+          <div class="kpi-sub" id="hkjc-bankroll-help">
+            可用現金 <strong id="hkjc-kpi-cash" class="mono-num">HK$100,000</strong>
+            <span class="dot-sep">·</span>
+            未結算注額 <strong id="hkjc-kpi-open-stake" class="mono-num">HK$0</strong>
+          </div>
+        </form>
       </article>
 
       <!-- KPI 2: Net PnL, ROI & Strike Rate -->
@@ -315,6 +336,6 @@
     </div>
   </dialog>
 
-  <script src="/static/app.js?v=20261123_hkjc_v6" defer></script>
+  <script src="/static/app.js?v=20261124_hkjc_v7" defer></script>
 </body>
 </html>

@@ -3,6 +3,7 @@
   let selectedRaceId = null;
   let betsFilterMode = "all"; // "all" | "race" | "settled"
   let settingsFormDirty = false;
+  let bankrollInputDirty = false;
   let ws = null;
 
   const $ = (id) => document.getElementById(id);
@@ -132,7 +133,10 @@
     }
 
     // 2. 4-Card Executive KPI Strip
-    if ($("hkjc-kpi-equity")) $("hkjc-kpi-equity").textContent = fmtHkd(port.equity_hkd || 100000);
+    const eqInput = $("hkjc-kpi-equity-input");
+    if (eqInput && !bankrollInputDirty && document.activeElement !== eqInput) {
+      eqInput.value = Math.round(Number(port.equity_hkd || 100000)).toLocaleString("en-US");
+    }
     if ($("hkjc-kpi-cash")) $("hkjc-kpi-cash").textContent = fmtHkd(port.cash_hkd || 100000);
     if ($("hkjc-kpi-open-stake")) $("hkjc-kpi-open-stake").textContent = fmtHkd(port.open_stake_hkd || 0);
 
@@ -556,10 +560,10 @@
                   data-race-id="${escapeHtml(race.race_id)}"
                   data-pool-type="WIN"
                   data-selection-key="${r.horse_no}"
-                  data-stake="${r.rec_win_stake_hkd >= 100 ? r.rec_win_stake_hkd : 300}"
+                  data-stake="${r.rec_win_stake_hkd >= 10 ? r.rec_win_stake_hkd : 100}"
                   ${isSettled ? "disabled" : ""}
                 >
-                  獨贏 ${fmtHkd(r.rec_win_stake_hkd >= 100 ? r.rec_win_stake_hkd : 300)}
+                  獨贏 ${fmtHkd(r.rec_win_stake_hkd >= 10 ? r.rec_win_stake_hkd : 100)}
                 </button>
                 <button
                   type="button"
@@ -567,10 +571,10 @@
                   data-race-id="${escapeHtml(race.race_id)}"
                   data-pool-type="PLACE"
                   data-selection-key="${r.horse_no}"
-                  data-stake="${r.rec_place_stake_hkd >= 100 ? r.rec_place_stake_hkd : 300}"
+                  data-stake="${r.rec_place_stake_hkd >= 10 ? r.rec_place_stake_hkd : 100}"
                   ${isSettled ? "disabled" : ""}
                 >
-                  位置 ${fmtHkd(r.rec_place_stake_hkd >= 100 ? r.rec_place_stake_hkd : 300)}
+                  位置 ${fmtHkd(r.rec_place_stake_hkd >= 10 ? r.rec_place_stake_hkd : 100)}
                 </button>
               </div>
             </td>
@@ -1059,7 +1063,57 @@
       }
     });
 
-    // 11. Reset Race Day (Keep Evolved Model vs Full Reset)
+    // 11. Editable Bankroll / Equity Form & Reset Race Day
+    const eqInput = $("hkjc-kpi-equity-input");
+    const bankrollForm = $("hkjc-bankroll-form");
+    if (eqInput) {
+      eqInput.addEventListener("input", () => {
+        bankrollInputDirty = true;
+        eqInput.setCustomValidity("");
+        eqInput.removeAttribute("aria-invalid");
+      });
+      eqInput.addEventListener("blur", () => {
+        if (!bankrollInputDirty) return;
+        const cleaned = eqInput.value.replace(/[^0-9.]/g, "");
+        const num = Number(cleaned);
+        if (!cleaned || Number.isNaN(num) || num < 100) {
+          eqInput.setCustomValidity("請輸入至少 HK$100 的有效投注淨值");
+          eqInput.setAttribute("aria-invalid", "true");
+        } else {
+          eqInput.value = Math.round(num).toLocaleString("en-US");
+        }
+      });
+    }
+    if (bankrollForm) {
+      bankrollForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        if (!eqInput) return;
+        const cleaned = eqInput.value.replace(/[^0-9.]/g, "");
+        const num = Number(cleaned);
+        if (!cleaned || Number.isNaN(num) || num < 100) {
+          eqInput.setCustomValidity("請輸入至少 HK$100 的有效投注淨值");
+          eqInput.setAttribute("aria-invalid", "true");
+          eqInput.reportValidity();
+          eqInput.focus();
+          return;
+        }
+        const saveBtn = $("hkjc-save-bankroll-btn");
+        if (saveBtn) saveBtn.disabled = true;
+        try {
+          const res = await apiPost("/api/hkjc/bankroll", { equity_hkd: Math.round(num) });
+          bankrollInputDirty = false;
+          eqInput.setCustomValidity("");
+          eqInput.removeAttribute("aria-invalid");
+          renderHkjc(res.hkjc);
+          showToast(`💰 已將模擬投注總淨值更新為 ${fmtHkd(res.hkjc?.portfolio?.equity_hkd)}，全場建議注碼已即時按比例重算！`);
+        } catch (err) {
+          showToast(`❌ 更新淨值失敗：${err.message}`);
+        } finally {
+          if (saveBtn) saveBtn.disabled = false;
+        }
+      });
+    }
+
     $("hkjc-reset-day-btn")?.addEventListener("click", async () => {
       try {
         const res = await apiPost("/api/hkjc/reset", { reset_model_weights: false });

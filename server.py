@@ -543,6 +543,20 @@ class PolySportsServer:
             status=403,
         )
 
+    async def handle_hkjc_bankroll(self, request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+            raw_val = str(body.get("equity_hkd") or body.get("initial_bankroll_hkd") or "").replace(",", "").replace("$", "").replace("HK", "").strip()
+            target_equity = float(raw_val)
+            self.engine.hkjc.update_bankroll_hkd(target_equity)
+            raw_state = self.engine.get_full_state()
+            await self.broadcast_ws({"type": "STATE_UPDATE", "data": raw_state})
+            return web.json_response(
+                {"ok": True, "hkjc": raw_state["hkjc"], "state": self._state_for_request(request, raw_state)}
+            )
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
     async def handle_hkjc_telegram_config(self, request: web.Request) -> web.Response:
         try:
             body = await request.json()
@@ -757,6 +771,7 @@ def create_app() -> web.Application:
     app.router.add_post("/api/lp/reset", srv.handle_lp_reset)
     app.router.add_get("/api/hkjc/state", srv.handle_hkjc_state)
     app.router.add_post("/api/hkjc/config", srv.handle_hkjc_config)
+    app.router.add_post("/api/hkjc/bankroll", srv.handle_hkjc_bankroll)
     app.router.add_post("/api/hkjc/bet", srv.handle_hkjc_bet)
     app.router.add_post("/api/hkjc/auto-bet", srv.handle_hkjc_auto_bet)
     app.router.add_post("/api/hkjc/settle", srv.handle_hkjc_settle)

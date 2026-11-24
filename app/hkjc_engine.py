@@ -786,6 +786,22 @@ class HkjcQuantEngine:
             self.auto_place_paper_bets_for_open_races()
         return current
 
+    def update_bankroll_hkd(self, target_equity_hkd: float) -> Dict[str, Any]:
+        """
+        Updates the user's paper betting equity / bankroll (HKD) and immediately
+        recomputes all races' Fractional Kelly recommended stakes to match.
+        """
+        if math.isnan(target_equity_hkd) or math.isinf(target_equity_hkd):
+            raise ValueError("請輸入有效的投注淨值金額")
+        target_equity = round(max(100.0, min(100000000.0, float(target_equity_hkd))), 0)
+        with self.db._connect() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(CASE WHEN status IN ('WON', 'LOST') THEN net_pnl_hkd ELSE 0 END), 0.0) AS realized_pnl FROM hkjc_paper_bets"
+            ).fetchone()
+            realized_pnl = float(row["realized_pnl"] or 0.0)
+        new_initial_bk = max(100.0, round(target_equity - realized_pnl, 2))
+        return self.update_config({"initial_bankroll_hkd": new_initial_bk})
+
     def get_model_state(self) -> Dict[str, Any]:
         with self.db._connect() as conn:
             row = conn.execute("SELECT value FROM settings WHERE key = 'hkjc_model_state'").fetchone()
@@ -1899,7 +1915,8 @@ class HkjcQuantEngine:
         bankroll = self._get_current_bankroll_hkd(cfg)
         kelly_frac = float(cfg.get("kelly_fraction", 0.25))
         min_ev_win = float(cfg.get("min_ev_win_pct", 5.0))
-        single_cap = float(cfg.get("single_bet_cap_hkd", 3000.0))
+        min_bet_unit = max(10.0, min(100.0, round(bankroll * 0.001, -1)))
+        single_cap = max(100.0, min(50000.0, round(bankroll * 0.06, -1)))
         dilution_damp = 1.0 / (1.0 + 0.15 * float(cfg.get("pool_dilution_sensitivity", 1.0)))
 
         for idx, r in enumerate(runners):
@@ -1922,11 +1939,13 @@ class HkjcQuantEngine:
 
             b_win = max(0.05, pred_close_win - 1.0)
             k_win = max(0.0, (p_b2 * (b_win + 1.0) - 1.0) / b_win) if win_ev_pct >= min_ev_win else 0.0
-            rec_win_stake = round(min(single_cap, bankroll * k_win * kelly_frac * dilution_damp), -1)
+            raw_win_s = round(min(single_cap, bankroll * k_win * kelly_frac * dilution_damp), -1)
+            rec_win_stake = max(min_bet_unit, raw_win_s) if k_win > 0 else 0.0
 
             b_pla = max(0.05, pred_close_pla - 1.0)
             k_pla = max(0.0, (p_top_place * (b_pla + 1.0) - 1.0) / b_pla) if place_ev_pct >= min_ev_win else 0.0
-            rec_pla_stake = round(min(single_cap, bankroll * k_pla * (kelly_frac * 0.75) * dilution_damp), -1)
+            raw_pla_s = round(min(single_cap, bankroll * k_pla * (kelly_frac * 0.75) * dilution_damp), -1)
+            rec_pla_stake = max(min_bet_unit, raw_pla_s) if k_pla > 0 else 0.0
 
             # Build concise, high-signal tags for the UI table
             key_signals: List[str] = []
@@ -2008,7 +2027,9 @@ class HkjcQuantEngine:
 
             b_ex = max(0.4, chosen_odds - 1.0)
             k_ex = max(0.0, (chosen_p * (b_ex + 1.0) - 1.0) / b_ex)
-            stake_ex = round(min(1000.0, max(200.0, bankroll * k_ex * (kelly_frac * 0.55))), -1)
+            ex_cap = max(20.0, min(1000.0, round(bankroll * 0.01, -1)))
+            ex_floor = max(10.0, min(200.0, round(bankroll * 0.002, -1)))
+            stake_ex = round(min(ex_cap, max(ex_floor, bankroll * k_ex * (kelly_frac * 0.55))), -1)
 
             exotic_recs.append(
                 {
@@ -2037,6 +2058,7 @@ class HkjcQuantEngine:
         used both by the pre-window UI/Telegram preview and by the T-5m final lock.
         """
         max_race_budget = bankroll * (float(cfg.get("max_race_exposure_pct", 8.0)) / 100.0)
+        min_bet_unit = max(10.0, min(100.0, round(bankroll * 0.001, -1)))
         min_ev = float(cfg.get("min_ev_win_pct", 5.0))
         ranked_runners = sorted(race.get("runners") or [], key=lambda x: x["benter2_prob"], reverse=True)
         preview_items: List[Dict[str, Any]] = []
@@ -2049,7 +2071,7 @@ class HkjcQuantEngine:
                 r
                 for r in ranked_runners[:3]
                 if r["win_ev_pct"] >= min_ev
-                and r["rec_win_stake_hkd"] >= 100.0
+                and r["rec_win_stake_hkd"] >= min_bet_unit
                 and 1.4 <= r["market_win_odds"] <= 18.0
                 and r["benter2_prob"] >= 0.14
             ],
@@ -2058,7 +2080,7 @@ class HkjcQuantEngine:
         )
         for r in win_candidates[:1]:
             stake = min(r["rec_win_stake_hkd"], max(0.0, max_race_budget - race_staked))
-            if stake >= 100.0:
+            if stake >= min_bet_unit:
                 preview_items.append(
                     {
                         "pool_type": "WIN",
@@ -2079,7 +2101,7 @@ class HkjcQuantEngine:
                 for r in ranked_runners[:4]
                 if r["horse_no"] != win_bet_horse_no
                 and r["place_ev_pct"] >= min_ev
-                and r["rec_place_stake_hkd"] >= 100.0
+                and r["rec_place_stake_hkd"] >= min_bet_unit
                 and r["benter2_place_prob"] >= 0.36
                 and 1.2 <= r["market_place_odds"] <= 6.5
             ],
@@ -2088,7 +2110,7 @@ class HkjcQuantEngine:
         )
         for r in place_candidates[:1]:
             stake = min(r["rec_place_stake_hkd"], max(0.0, max_race_budget - race_staked))
-            if stake >= 100.0:
+            if stake >= min_bet_unit:
                 preview_items.append(
                     {
                         "pool_type": "PLACE",
@@ -2109,7 +2131,7 @@ class HkjcQuantEngine:
                 corr_discount = 0.68 if overlap_cnt >= 1 else 1.0
                 raw_ex_stake = round(top_ex["rec_stake_hkd"] * corr_discount, -1)
                 stake = min(raw_ex_stake, max(0.0, max_race_budget - race_staked))
-                if stake >= 100.0:
+                if stake >= min_bet_unit:
                     preview_items.append(
                         {
                             "pool_type": top_ex["pool_type"],
@@ -2139,7 +2161,7 @@ class HkjcQuantEngine:
             ).fetchone()
             open_stake = float(row["open_stake"] or 0.0)
             realized_pnl = float(row["realized_pnl"] or 0.0)
-        return max(2000.0, initial_bk + realized_pnl - open_stake)
+        return max(100.0, initial_bk + realized_pnl - open_stake)
 
     def auto_place_paper_bets_for_open_races(self, force_manual: bool = False) -> List[Dict[str, Any]]:
         """
@@ -2188,6 +2210,7 @@ class HkjcQuantEngine:
 
         bankroll = self._get_current_bankroll_hkd(cfg)
         max_race_budget = bankroll * (float(cfg.get("max_race_exposure_pct", 8.0)) / 100.0)
+        min_bet_unit = max(10.0, min(100.0, round(bankroll * 0.001, -1)))
         race_staked = 0.0
         min_ev = float(cfg.get("min_ev_win_pct", 5.0))
 
@@ -2202,7 +2225,7 @@ class HkjcQuantEngine:
                 r
                 for r in ranked_runners[:3]
                 if r["win_ev_pct"] >= min_ev
-                and r["rec_win_stake_hkd"] >= 100.0
+                and r["rec_win_stake_hkd"] >= min_bet_unit
                 and 1.4 <= r["market_win_odds"] <= 18.0
                 and r["benter2_prob"] >= 0.14
             ],
@@ -2214,7 +2237,7 @@ class HkjcQuantEngine:
             sel_key = str(r["horse_no"])
             if ("WIN", sel_key) not in existing_keys:
                 stake = min(r["rec_win_stake_hkd"], max(0.0, max_race_budget - race_staked))
-                if stake >= 100.0:
+                if stake >= min_bet_unit:
                     bet = self._insert_paper_bet(
                         race_id=race_id,
                         race_no=race_no,
@@ -2245,7 +2268,7 @@ class HkjcQuantEngine:
                 for r in ranked_runners[:4]
                 if r["horse_no"] != win_bet_horse_no
                 and r["place_ev_pct"] >= min_ev
-                and r["rec_place_stake_hkd"] >= 100.0
+                and r["rec_place_stake_hkd"] >= min_bet_unit
                 and r["benter2_place_prob"] >= 0.36
                 and 1.2 <= r["market_place_odds"] <= 6.5
             ],
@@ -2257,7 +2280,7 @@ class HkjcQuantEngine:
             sel_key = str(r["horse_no"])
             if ("PLACE", sel_key) not in existing_keys:
                 stake = min(r["rec_place_stake_hkd"], max(0.0, max_race_budget - race_staked))
-                if stake >= 100.0:
+                if stake >= min_bet_unit:
                     bet = self._insert_paper_bet(
                         race_id=race_id,
                         race_no=race_no,
@@ -2293,7 +2316,7 @@ class HkjcQuantEngine:
                     corr_discount = 0.68 if overlap_cnt >= 1 else 1.0
                     raw_ex_stake = round(top_ex["rec_stake_hkd"] * corr_discount, -1)
                     stake = min(raw_ex_stake, max(0.0, max_race_budget - race_staked))
-                    if stake >= 100.0:
+                    if stake >= min_bet_unit:
                         bet = self._insert_paper_bet(
                             race_id=race_id,
                             race_no=race_no,

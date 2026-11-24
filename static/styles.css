@@ -419,6 +419,54 @@ body {
   color: var(--text-primary);
 }
 
+.kpi-bankroll-form {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 5px;
+  height: 100%;
+}
+
+.kpi-equity-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.kpi-currency-prefix {
+  font-size: 18px;
+  font-weight: 700;
+  color: #34d399;
+}
+
+.kpi-equity-input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: max(1rem, 1.2rem);
+  font-weight: 700;
+  color: var(--text-primary);
+  background: rgba(15, 23, 42, 0.78);
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  min-height: 36px;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.kpi-equity-input:focus-visible {
+  outline: 2px solid #10b981;
+  outline-offset: 2px;
+  border-color: #10b981;
+}
+
+.kpi-equity-input:user-invalid,
+.kpi-equity-input[aria-invalid="true"] {
+  border-color: #f43f5e;
+  outline-color: #f43f5e;
+}
+
 .kpi-bias-row {
   font-size: 15.5px;
   padding: 3px 0;
