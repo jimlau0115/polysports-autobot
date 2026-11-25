@@ -2288,10 +2288,10 @@ class HkjcQuantEngine:
             high_ex_cands = [
                 ex
                 for ex in ex_recs
-                if (ex["pool_type"] == "FORECAST" and ex["ev_pct"] >= 18.0 and ex["benter2_prob"] >= 0.055)
-                or (ex["pool_type"] == "TRIO" and ex["ev_pct"] >= 22.0 and ex["benter2_prob"] >= 0.055)
+                if (ex["pool_type"] == "FORECAST" and ex["ev_pct"] >= 18.0 and ex["benter2_prob"] >= 0.042)
+                or (ex["pool_type"] == "TRIO" and ex["ev_pct"] >= 22.0 and ex["benter2_prob"] >= 0.042)
             ]
-            chosen_ex_list = pair_cands[:1] + high_ex_cands[:1]
+            chosen_ex_list = pair_cands[:1] + high_ex_cands[:2]
             for top_ex in chosen_ex_list:
                 pair_nos = {int(x) for x in re.split(r"[-,>]", top_ex["selection_key"]) if x.isdigit()}
                 overlap_cnt = len(pair_nos.intersection(single_bet_horses))
@@ -2486,10 +2486,10 @@ class HkjcQuantEngine:
             high_ex_cands = [
                 ex
                 for ex in ex_recs
-                if (ex["pool_type"] == "FORECAST" and ex["ev_pct"] >= 18.0 and ex["benter2_prob"] >= 0.055)
-                or (ex["pool_type"] == "TRIO" and ex["ev_pct"] >= 22.0 and ex["benter2_prob"] >= 0.055)
+                if (ex["pool_type"] == "FORECAST" and ex["ev_pct"] >= 18.0 and ex["benter2_prob"] >= 0.042)
+                or (ex["pool_type"] == "TRIO" and ex["ev_pct"] >= 22.0 and ex["benter2_prob"] >= 0.042)
             ]
-            chosen_ex_list = pair_cands[:1] + high_ex_cands[:1]
+            chosen_ex_list = pair_cands[:1] + high_ex_cands[:2]
             for top_ex in chosen_ex_list:
                 p_type = top_ex["pool_type"]
                 s_key = top_ex["selection_key"]
