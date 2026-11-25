@@ -511,8 +511,8 @@ def _parse_last6run(last6_str: str) -> Tuple[List[int], float, float]:
     if not nums:
         return [], 0.0, 1.25
 
-    # Reverse so index 0 is the most recent race
-    recent_first = list(reversed(nums))
+    # In HKJC last6run (e.g. '1/4/2/9/2/6'), index 0 (leftmost) is ALREADY the most recent race!
+    recent_first = list(nums)
     weights = [0.78 ** i for i in range(len(recent_first))]
     w_sum = sum(weights)
     # Score in [-0.5, +0.6] where 1st = +0.6, 7th = 0.0, 14th = -0.5
@@ -707,7 +707,7 @@ class HkjcQuantEngine:
                         seed_data = json.load(sf)
                     for c_row in seed_data.get("cache") or []:
                         conn.execute(
-                            "INSERT OR IGNORE INTO hkjc_live_cache (cache_key, payload_json, updated_at) VALUES (?, ?, ?)",
+                            "INSERT OR REPLACE INTO hkjc_live_cache (cache_key, payload_json, updated_at) VALUES (?, ?, ?)",
                             (c_row["cache_key"], c_row["payload_json"], c_row["updated_at"]),
                         )
                     for i_row in seed_data.get("incidents") or []:
@@ -1473,8 +1473,27 @@ class HkjcQuantEngine:
             }
 
             if race_id in settled_db_map:
+                settled_payload = settled_db_map[race_id]
+                # Vulnerability #4 Fix: Automatically backfill in_running, beaten_lengths, finish_time,
+                # sectional_times & steward_incident if LocalResults.aspx became available after initial settlement!
+                perf_by_no = (lr_cache or {}).get("perf_by_no") or {}
+                incidents_by_no = (lr_cache or {}).get("incidents_by_no") or {}
+                sec_times = (lr_cache or {}).get("sectional_times") or []
+                fo_list = settled_payload.get("full_order") or []
+                needs_backfill = bool(perf_by_no) and any(
+                    fo.get("in_running") in ("-", "", None)
+                    or (fo.get("position", 99) > 1 and fo.get("beaten_lengths") in ("-", "", None))
+                    for fo in fo_list
+                )
+                needs_inc_backfill = bool(incidents_by_no) and any(
+                    fo.get("steward_incident") in ("沿途走位正常，無特別事故報告。", "-", "", None)
+                    and str(fo.get("horse_no")) in incidents_by_no
+                    for fo in fo_list
+                )
+                if needs_backfill or needs_inc_backfill:
+                    self._backfill_settled_race_from_lr_cache(race_obj, settled_payload, lr_cache)
                 race_obj["status"] = "SETTLED"
-                race_obj["settlement"] = settled_db_map[race_id]
+                race_obj["settlement"] = settled_payload
             else:
                 race_obj["status"] = "BETTING_OPEN"
                 race_obj["settlement"] = None
@@ -1499,6 +1518,96 @@ class HkjcQuantEngine:
         if self.get_config().get("auto_paper_bet_enabled", True):
             self.auto_place_paper_bets_for_open_races()
 
+    def _backfill_settled_race_from_lr_cache(
+        self, race_obj: Dict[str, Any], settled_payload: Dict[str, Any], lr_cache: Dict[str, Any]
+    ) -> None:
+        """
+        Backfills official in_running positions, beaten_lengths, finish_time_sec, sectional_times,
+        and Stewards' Incidents into an already-settled race once LocalResults.aspx finishes publishing.
+        """
+        perf_by_no = lr_cache.get("perf_by_no") or {}
+        incidents_by_no = lr_cache.get("incidents_by_no") or {}
+        sec_times = lr_cache.get("sectional_times") or []
+        fo_list = settled_payload.get("full_order") or []
+        if not fo_list:
+            return
+
+        now = utc_now_iso()
+        m_date = self.meeting_info.get("date", "2026-11-25")
+        runner_code_map = {int(r["horse_no"]): r.get("horse_code", "") for r in (race_obj.get("runners") or [])}
+
+        with self.db._connect() as conn:
+            for fo in fo_list:
+                h_no = int(fo["horse_no"])
+                p_info = perf_by_no.get(str(h_no)) or {}
+                pos = int(fo.get("position") or p_info.get("position") or 99)
+                if p_info.get("in_running"):
+                    fo["in_running"] = p_info["in_running"]
+                if p_info.get("finish_time"):
+                    fo["finish_time_sec"] = p_info["finish_time"]
+                if p_info.get("beaten_margin"):
+                    bm = p_info["beaten_margin"]
+                    fo["beaten_lengths"] = bm
+                    fo["beaten_lengths_num"] = round(_parse_beaten_lengths(bm, pos), 2)
+                if incidents_by_no.get(str(h_no)):
+                    fo["steward_incident"] = incidents_by_no[str(h_no)]
+
+                in_run_nums = [int(x) for x in re.findall(r"\d+", str(fo.get("in_running", "")))]
+                if in_run_nums:
+                    first_call = in_run_nums[0]
+                    fo["actual_style"] = (
+                        "LEADER" if first_call <= 2 else "ON_PACE" if first_call <= 5 else "CLOSER" if first_call >= 9 else "MIDFIELD"
+                    )
+
+                h_code = runner_code_map.get(h_no, "")
+                if h_code and (fo.get("actual_style") or incidents_by_no.get(str(h_no))):
+                    inc_text = str(fo.get("steward_incident") or "沿途走位正常，無特別事故報告。")
+                    parsed_nlp = _extract_nlp_steward_tags(inc_text)
+                    conn.execute(
+                        """
+                        INSERT OR REPLACE INTO hkjc_horse_incidents (
+                            horse_code, horse_name, last_race_date, last_race_no,
+                            incident_text, nlp_label, censored_boost, in_running_style, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            h_code,
+                            fo.get("horse_name_ch", ""),
+                            m_date,
+                            race_obj["race_no"],
+                            inc_text,
+                            parsed_nlp["label"],
+                            parsed_nlp["boost"],
+                            fo.get("actual_style", ""),
+                            now,
+                        ),
+                    )
+
+            w_item = fo_list[0]
+            w_no = int(w_item["horse_no"])
+            w_in_run = [int(x) for x in re.findall(r"\d+", str(w_item.get("in_running", "")))]
+            sec_str = " / ".join(f"{s}s" for s in sec_times) if sec_times else "官方標準分段"
+            if w_in_run and w_in_run[0] >= 7:
+                actual_pace_desc = f"🚀 後上反先局 (分段: {sec_str}) — 頭馬 #{w_no} {w_item['horse_name_ch']} 沿途走位 [{w_item['in_running']}] 後勁凌厲奪冠"
+            elif w_in_run and w_in_run[0] <= 2:
+                actual_pace_desc = f"⚡ 前領放頭局 (分段: {sec_str}) — 頭馬 #{w_no} {w_item['horse_name_ch']} 沿途走位 [{w_item['in_running']}] 守好位一放到底"
+            else:
+                actual_pace_desc = f"⚖️ 居中突圍局 (分段: {sec_str}) — 頭馬 #{w_no} {w_item['horse_name_ch']} 沿途走位 [{w_item['in_running']}] 中段發力勝出"
+
+            settled_payload["actual_pace_scenario"] = actual_pace_desc
+            conn.execute(
+                """
+                UPDATE hkjc_race_results
+                SET actual_pace_scenario = ?, full_order_json = ?
+                WHERE race_id = ?
+                """,
+                (
+                    actual_pace_desc,
+                    json.dumps(fo_list, ensure_ascii=False),
+                    race_obj["race_id"],
+                ),
+            )
+
     def _infer_running_style(
         self,
         draw: int,
@@ -1508,7 +1617,7 @@ class HkjcQuantEngine:
         sigma_hetero: float,
         horse_inc: Optional[Dict[str, Any]],
     ) -> Tuple[str, str, int]:
-        # Audit Fix #3: Separate intrinsic horse running style from today's barrier draw
+        # Audit Fix #3 + Vulnerability #2 Fix: 100% intrinsic horse running style (zero barrier draw leakage!)
         if horse_inc and horse_inc.get("in_running_style"):
             saved_st = horse_inc["in_running_style"]
             if saved_st == "LEADER":
@@ -1521,15 +1630,15 @@ class HkjcQuantEngine:
         has_blinkers = "B" in gear_info or "P" in gear_info
         if sigma_hetero <= 0.78 and len(recent_positions) >= 4 and max(recent_positions[:3]) <= 6:
             return ("GRINDER", "均速尺寸馬 (Consistent Grinder)", 68)
-        if has_blinkers and distance_m <= 1400 and (not recent_positions or recent_positions[0] <= 5):
+        if has_blinkers and distance_m <= 1400 and recent_positions and recent_positions[0] <= 2:
             return ("LEADER", "快閘前領型 (Front-Runner)", 88)
         if len(recent_positions) >= 2 and sum(recent_positions[:2]) / 2.0 <= 4.5:
-            return ("ON_PACE", "跟前守好位 (On-Pace)", 77)
-        if distance_m >= 1600 and not has_blinkers and (not recent_positions or recent_positions[0] >= 7):
+            return ("ON_PACE", "跟前守好位 (On-Pace)", 76)
+        if distance_m >= 1600 and not has_blinkers and recent_positions and sum(recent_positions[:2]) / max(1, len(recent_positions[:2])) >= 8.5:
             return ("CLOSER", "留後末段衝刺 (Closer)", 46)
-        if has_blinkers and draw <= 5:
-            return ("ON_PACE", "積極跟前 (On-Pace)", 75)
-        if draw >= 11 and not has_blinkers:
+        if has_blinkers and (not recent_positions or sum(recent_positions[:2]) / max(1, len(recent_positions[:2])) <= 5.5):
+            return ("ON_PACE", "積極跟前 (On-Pace)", 73)
+        if recent_positions and sum(recent_positions[:2]) / max(1, len(recent_positions[:2])) >= 9.0 and not has_blinkers:
             return ("CLOSER", "留後待機 (Closer)", 48)
         return ("MIDFIELD", "居中順走 (Midfield)", 62)
 
@@ -1551,16 +1660,16 @@ class HkjcQuantEngine:
             }
 
         # 2. Detect Censored Rebound pattern from real last6run & draw & rest days:
-        # e.g., Horse ran Top-3 two/three starts ago, had an uncharacteristic loss (>=7th) last start,
-        # and now draws inside/middle (<= 6) with ideal freshening (14..42 days).
+        # True single-race excuse rebound: horse ran Top-3 just 1 or 2 starts ago (recent_positions[1:3]),
+        # had an uncharacteristic loss (>=7th) last start, and draws <= 9 (captures R5 #11 飛躍成就 11/2/2/3/2/2!).
         if len(recent_positions) >= 2:
             last_pos = recent_positions[0]
-            prior_best = min(recent_positions[1:4])
-            if last_pos >= 7 and prior_best <= 3 and draw <= 7:
+            prior_two_best = min(recent_positions[1:3])
+            if last_pos >= 7 and prior_two_best <= 3 and draw <= 9:
                 return {
                     "code": "FORM_REBOUND",
-                    "label": f"🔄 上仗失準(#{last_pos}) · 前績三甲(#{prior_best})今排{draw}檔反彈",
-                    "desc": f"近績顯示具備跑入前 {prior_best} 名實力，上仗跑第 {last_pos} 名屬表面失準，今仗排 {draw} 檔具反彈優勢。",
+                    "label": f"🔄 上仗失準(#{last_pos}) · 前績三甲(#{prior_two_best})今排{draw}檔反彈",
+                    "desc": f"前兩仗內曾跑入第 {prior_two_best} 名，上仗跑第 {last_pos} 名屬單場表面失準，今仗具備強勁反彈條件。",
                     "boost": 0.28,
                 }
             if last_pos <= 3 and 14 <= days_since_last <= 35:
@@ -1568,7 +1677,7 @@ class HkjcQuantEngine:
                     "code": "PEAK_CYCLE",
                     "label": f"✅ 上仗跑第 {last_pos} 名 · 相隔 {days_since_last} 日狀態正值巔峰",
                     "desc": f"上仗剛入三甲且休息 {days_since_last} 天體力充沛。",
-                    "boost": 0.16,
+                    "boost": 0.18,
                 }
 
         return {
@@ -1693,7 +1802,9 @@ class HkjcQuantEngine:
         shrinkage_alpha = float(cfg.get("bayesian_shrinkage_alpha", 0.20))
         distance_m = int(race.get("distance_m") or 1200)
         venue_code = str(race.get("venue_code") or "ST")
+        surface_str = str(race.get("surface") or "")
         is_st_straight_1000 = venue_code == "ST" and distance_m == 1000
+        is_hv_narrow_c = venue_code == "HV" and ("C+3" in surface_str or "C " in surface_str)
 
         # 1. Pace Pressure Index (PPI) & Speed Map
         leader_count = sum(1 for r in runners if r["style_code"] == "LEADER")
@@ -1745,18 +1856,33 @@ class HkjcQuantEngine:
             style = r["style_code"]
             eff_weight = r["weight_lbs"] - r["allowance_lbs"]
 
-            # Audit Fix #2: Form-Gated Best Time Speed Figure
-            # Prevents overrating declining old horses whose fast time was set years ago,
-            # and interpolates cleanly when a horse is running this distance for the first time.
-            form_health = max(0.35, min(1.15, 0.78 + r["form_score"] * 0.75))
+            # Audit Fix #2 + Vulnerability #5 Fix: Strict Form-Gated Best Time Speed Figure & Chronic Slump Filter
+            # Prevents overrating horses on multi-race slumps (e.g. 7/11/6 or 8/6/10 or 4/5/9) whose career-best time
+            # was set seasons ago, while rewarding horses with recent Top-3 finishes (nums[0] <= 3 or nums[1] <= 3).
+            rec_pos = r.get("recent_positions") or []
+            has_recent_top3 = bool(rec_pos and rec_pos[0] <= 3)
+            in_multi_race_slump = bool(len(rec_pos) >= 3 and min(rec_pos[:3]) >= 4 and (len(rec_pos) < 2 or rec_pos[1] > 3))
+            in_chronic_slump = bool(len(rec_pos) >= 3 and min(rec_pos[:3]) >= 6)
+
+            if in_chronic_slump:
+                form_health = 0.20
+            elif in_multi_race_slump:
+                form_health = 0.38
+            elif has_recent_top3:
+                form_health = min(1.20, 0.90 + max(0.0, r["form_score"]) * 0.65)
+            else:
+                form_health = max(0.45, min(1.05, 0.72 + r["form_score"] * 0.65))
+
             time_adv = 0.0
             if median_best_time is not None and r["best_time_sec"] is not None:
-                raw_time_diff = max(-0.55, min(0.65, (median_best_time - r["best_time_sec"]) * 0.85))
-                time_adv = raw_time_diff * (form_health if raw_time_diff > 0 else 1.0)
+                raw_time_diff = max(-0.45, min(0.60, (median_best_time - r["best_time_sec"]) * 0.85))
+                time_adv = raw_time_diff * (form_health if raw_time_diff > 0 else 0.75)
             elif r["form_score"] > 0.15:
                 # First time at distance with strong recent form
                 time_adv = r["form_score"] * 0.30
             r["speed_figure_edge"] = round(time_adv, 3)
+
+            slump_penalty = -0.24 if in_chronic_slump else (-0.10 if in_multi_race_slump else (0.10 if has_recent_top3 else 0.0))
 
             # Classical Benter 1.0 (linear rating + weight + draw + form + public odds prior)
             b1_fund = (
@@ -1770,6 +1896,7 @@ class HkjcQuantEngine:
 
             # --- Gu-Benter 2.0 Six Sub-Models ---
             # (1) GBDT Non-linear Fundamental Utility + Offline Multi-Season Track×Distance×Draw Prior
+            # Vulnerability #2 & #3 Fix: Happy Valley C+3 / C narrow course "Draw 1 Pocket Trap" & dynamic intraday draw override
             nonlinear_draw = 0.0
             if is_st_straight_1000:
                 # Offline Multi-Season Prior: Sha Tin 1000m Straight Course strongly favors outside draws (10-14) near grandstand rail!
@@ -1778,19 +1905,33 @@ class HkjcQuantEngine:
                 elif draw <= 4:
                     nonlinear_draw = -0.24
                 draw_bias_adj = 0.0
+            elif is_hv_narrow_c:
+                # Happy Valley C+3 / C narrow course: movable rail shifted out 8.5m creates severe pocket/traffic risk on Draw 1
+                # for non-lone-leaders while middle draws (4-9) enjoy clean momentum in the center lane.
+                prior_atten = max(0.25, 1.0 - max(0.0, day_draw_bias) * 8.0)
+                if draw == 1 and style != "LEADER":
+                    nonlinear_draw = -0.10
+                elif 3 <= draw <= 7 and style in ("LEADER", "ON_PACE", "MIDFIELD"):
+                    nonlinear_draw = 0.14 * prior_atten
+                elif draw >= 11 and style == "LEADER":
+                    nonlinear_draw = -0.18 * prior_atten
+                # Amplify learned intraday draw bias so middle/outer track bias overrides static priors
+                draw_bias_adj = day_draw_bias * 2.4 * ((draw - 6.0) / 5.0)
             else:
+                prior_atten = max(0.35, 1.0 - max(0.0, day_draw_bias) * 6.0)
                 if distance_m <= 1200 and draw >= 10 and style in ("LEADER", "ON_PACE"):
-                    nonlinear_draw = -0.38
+                    nonlinear_draw = -0.32 * prior_atten
                 elif draw <= 4 and style in ("LEADER", "ON_PACE"):
-                    nonlinear_draw = 0.24
+                    nonlinear_draw = 0.20 * prior_atten
                 elif draw >= 11:
-                    nonlinear_draw = -0.22
+                    nonlinear_draw = -0.18 * prior_atten
                 # Incorporate real-time learned day_draw_bias from earlier turn races today
-                draw_bias_adj = day_draw_bias * ((draw - 6.5) / 5.5)
+                draw_bias_adj = day_draw_bias * 2.0 * ((draw - 6.5) / 5.5)
 
             s_fund = (
-                r["form_score"] * 0.95
-                + time_adv * 0.85
+                r["form_score"] * 1.05
+                + slump_penalty
+                + time_adv * 0.80
                 + (r["rating"] - mean_rating) * 0.042
                 - (eff_weight - 126.0) * 0.022
                 + nonlinear_draw
@@ -1830,9 +1971,11 @@ class HkjcQuantEngine:
             s_nlp = r["censored_boost"] * 1.25
 
             # (4) Stable & Jockey Intent Signal + Fast Intraday Jockey/Trainer Hotness Residual
+            # Gate intent signal when horse is in a chronic multi-race slump (e.g. 7/11/6) to avoid public Purton/Trump hype traps
             j_hot = float(intraday_jockey.get(r["jockey"], 0.0))
             t_hot = float(intraday_trainer.get(r["trainer"], 0.0))
-            s_intent = r["intent_score"] * 1.20 + max(-0.20, min(0.28, j_hot * 0.18 + t_hot * 0.14))
+            intent_mult = 0.55 if in_chronic_slump else (0.80 if in_multi_race_slump else 1.15)
+            s_intent = r["intent_score"] * intent_mult + max(-0.20, min(0.28, j_hot * 0.18 + t_hot * 0.14))
 
             # (5) Heteroscedastic Variance Adjustment
             sigma_h = r["sigma_hetero"]
@@ -1866,10 +2009,24 @@ class HkjcQuantEngine:
                 + weights["w_hetero_mc"] * (s_hetero * 2.5)
                 + weights["w_microstructure"] * (s_micro * 3.0)
             )
-            # Second-stage Benter-Gu Logit Ensemble:
-            # Corrects Favorite-Longshot Bias (gamma = 1.08 > 1.0) and blends with 6-factor fundamental composite
-            flb_adj = -0.25 if r["market_win_odds"] >= 25.0 else (0.08 if r["market_win_odds"] <= 6.5 else 0.0)
-            b2_u = 1.08 * math.log(max(1e-4, pub_probs[idx])) + 0.68 * fundamental_composite + flb_adj
+            # Second-stage Benter-Gu Logit Ensemble (Vulnerability #2 Fix: Concave Short-Favorite Damping + Value Contender Boost):
+            # 1) Damps over-bet <2.8x public favorites (especially HV C+3 Draw 1 traps) so they don't inflate to 45%-55%
+            #    and wipe out Log-Loss / single-banker exotics.
+            # 2) Preserves full 0.78 fundamental composite amplification on 3.0x-12.0x contenders so real edges overcome
+            #    the 17.5% HKJC tote takeout.
+            eff_pub_log = math.log(max(1e-4, pub_probs[idx]))
+            if r["market_win_odds"] < 2.8:
+                short_fav_damp = 0.18 * (2.8 - r["market_win_odds"])
+                if is_hv_narrow_c and draw == 1:
+                    short_fav_damp += 0.12
+                eff_pub_log -= short_fav_damp
+            if r["market_win_odds"] >= 26.0:
+                flb_adj = -0.18
+            elif 3.0 <= r["market_win_odds"] <= 9.5 and fundamental_composite > 0.08:
+                flb_adj = 0.12
+            else:
+                flb_adj = 0.0
+            b2_u = 1.02 * eff_pub_log + 0.78 * fundamental_composite + flb_adj
             b2_logits.append(b2_u)
 
         max_b1 = max(b1_logits)
@@ -2004,9 +2161,10 @@ class HkjcQuantEngine:
             raw_win_s = round(min(single_cap, bankroll * k_win * kelly_frac * dilution_damp), -1)
             rec_win_stake = max(min_bet_unit, raw_win_s) if k_win > 0 else 0.0
 
-            b_pla = max(0.05, pred_close_pla - 1.0)
+            b_pla = max(0.20, pred_close_pla - 1.0)
             k_pla = max(0.0, (p_top_place * (b_pla + 1.0) - 1.0) / b_pla) if place_ev_pct >= min_ev_win else 0.0
-            raw_pla_s = round(min(single_cap, bankroll * k_pla * (kelly_frac * 0.75) * dilution_damp), -1)
+            pla_cap = max(30.0, min(1200.0, round(bankroll * 0.012, -1)))
+            raw_pla_s = round(min(pla_cap, bankroll * k_pla * (kelly_frac * 0.45) * dilution_damp), -1)
             rec_pla_stake = max(min_bet_unit, raw_pla_s) if k_pla > 0 else 0.0
 
             # Build concise, high-signal tags for the UI table
@@ -2057,6 +2215,7 @@ class HkjcQuantEngine:
         ex_floor = max(10.0, min(200.0, round(bankroll * 0.002, -1)))
 
         top_pairs = sorted(qin_prob_map.items(), key=lambda x: x[1], reverse=True)[:15]
+        top2_core_nos = {r["horse_no"] for r in sorted_b2_runners[:2]}
         for pair_key, p_qin_b2 in top_pairs:
             h1, h2 = [int(x) for x in pair_key.split("-")]
             if h1 not in top4_nos or h2 not in top4_nos:
@@ -2064,6 +2223,7 @@ class HkjcQuantEngine:
             r1, r2 = runner_by_no.get(h1), runner_by_no.get(h2)
             if not r1 or not r2:
                 continue
+            is_core_top2_pair = ({h1, h2} == top2_core_nos)
 
             p1_pub, p2_pub = r1["public_prob"], r2["public_prob"]
             p_qin_h1 = (p1_pub * p2_pub / max(0.01, 1.0 - p1_pub)) + (p2_pub * p1_pub / max(0.01, 1.0 - p2_pub))
@@ -2075,7 +2235,8 @@ class HkjcQuantEngine:
             qin_ev = round((p_qin_b2 * real_qin_odds - 1.0) * 100.0, 1) if real_qin_odds else -99.0
             qpl_ev = round((p_qpl_b2 * real_qpl_odds - 1.0) * 100.0, 1) if real_qpl_odds else -99.0
 
-            if place_pays_three and real_qpl_odds and qpl_ev >= max(4.0, min_ev_exotic * 0.5) and p_qpl_b2 >= 0.16:
+            qpl_ev_thresh = 2.0 if is_core_top2_pair else max(4.0, min_ev_exotic * 0.5)
+            if place_pays_three and real_qpl_odds and qpl_ev >= qpl_ev_thresh and p_qpl_b2 >= 0.16:
                 pool_type = "PLACE_QUINELLA"
                 pool_label = "位置Q (QPL)"
                 chosen_p = p_qpl_b2
@@ -2107,12 +2268,15 @@ class HkjcQuantEngine:
                         "market_odds": chosen_odds,
                         "ev_pct": chosen_ev,
                         "rec_stake_hkd": stake_ex,
-                        "rationale": f"馬會實時{pool_label}賠率 {chosen_odds}x · Top-4 主力互串 (命中率 {(chosen_p*100):.1f}%, EV +{chosen_ev}%)",
+                        "is_core_top2": is_core_top2_pair,
+                        "rationale": f"馬會實時{pool_label}賠率 {chosen_odds}x · {'Top-2 雙膽主力對碰' if is_core_top2_pair else 'Top-4 主力互串'} (命中率 {(chosen_p*100):.1f}%, EV +{chosen_ev}%)",
                     }
                 )
 
-            # Evaluate Ordered Forecast (二重彩 FCT: 19.5% takeout — requires asymmetric banker-leg edge & EV >= 14%)
+            # Evaluate Ordered Forecast (二重彩 FCT: 19.5% takeout — requires asymmetric banker-leg edge & EV >= 18%)
             for a_no, b_no, ra, rb in ((h1, h2, r1, r2), (h2, h1, r2, r1)):
+                if a_no not in top3_nos or b_no not in top3_nos:
+                    continue
                 f_key = f"{a_no}>{b_no}"
                 rev_key = f"{b_no}>{a_no}"
                 p_fct_b2 = fct_prob_map.get(f_key, 0.0)
@@ -2121,13 +2285,13 @@ class HkjcQuantEngine:
                 if not real_fct_odds and real_qin_odds and p_qin_b2 > 0:
                     # Fallback estimate when FCT pool not yet open
                     real_fct_odds = round((real_qin_odds * 0.975) * (p_qin_b2 / max(0.005, p_fct_b2)), 1)
-                if not real_fct_odds or p_fct_b2 < 0.042:
+                if not real_fct_odds or p_fct_b2 < 0.048:
                     continue
                 # Require ordered asymmetry (A beats B more likely than B beats A, or B is a consistent Grinder)
-                if p_fct_b2 < p_fct_rev * 1.12 and rb["style_code"] != "GRINDER":
+                if p_fct_b2 < p_fct_rev * 1.15 and rb["style_code"] != "GRINDER":
                     continue
                 fct_ev = round((p_fct_b2 * real_fct_odds - 1.0) * 100.0, 1)
-                if fct_ev >= max(14.0, min_ev_exotic * 1.15) and real_fct_odds <= 120.0:
+                if fct_ev >= max(18.0, min_ev_exotic * 1.35) and real_fct_odds <= 95.0:
                     b_f = max(1.0, real_fct_odds - 1.0)
                     k_f = max(0.0, (p_fct_b2 * (b_f + 1.0) - 1.0) / b_f)
                     fct_cap = max(20.0, min(700.0, round(bankroll * 0.007, -1)))
@@ -2147,7 +2311,7 @@ class HkjcQuantEngine:
                         }
                     )
 
-        # Evaluate Trio (單T TRI: 22.0% takeout — anchored on Top-3/4/5 contenders, requires EV >= 18%)
+        # Evaluate Trio (單T TRI: 22.0% takeout — anchored on Top-3/4/5 contenders, requires EV >= 24%)
         if n >= 4:
             top_trios = sorted(tri_prob_map.items(), key=lambda x: x[1], reverse=True)[:25]
             for trio_key, p_tri_b2 in top_trios:
@@ -2156,13 +2320,13 @@ class HkjcQuantEngine:
                     continue
                 if sum(1 for h in t_nos if h in top3_nos) < 2:
                     continue
-                if p_tri_b2 < 0.042:
+                if p_tri_b2 < 0.048:
                     continue
                 real_tri_odds = tri_odds_map.get(trio_key)
                 if not real_tri_odds:
                     real_tri_odds = round(min(300.0, max(3.5, 0.78 / max(0.005, tri_h1_map.get(trio_key, p_tri_b2 * 0.85)))), 1)
                 tri_ev = round((p_tri_b2 * real_tri_odds - 1.0) * 100.0, 1)
-                if tri_ev >= max(18.0, min_ev_exotic * 1.4) and real_tri_odds <= 180.0:
+                if tri_ev >= max(24.0, min_ev_exotic * 1.8) and real_tri_odds <= 140.0:
                     rt_objs = [runner_by_no[h] for h in t_nos if h in runner_by_no]
                     if len(rt_objs) != 3:
                         continue
@@ -2185,9 +2349,18 @@ class HkjcQuantEngine:
                         }
                     )
 
-        pair_exotic_recs.sort(key=lambda x: (x["benter2_prob"] * 0.70 + (x["ev_pct"] / 100.0) * 0.30), reverse=True)
-        fct_exotic_recs.sort(key=lambda x: (x["benter2_prob"] * 0.65 + (x["ev_pct"] / 100.0) * 0.35), reverse=True)
-        tri_exotic_recs.sort(key=lambda x: (x["benter2_prob"] * 0.65 + (x["ev_pct"] / 100.0) * 0.35), reverse=True)
+        # Vulnerability #3 & #5 Fix: Prioritize Core #1×#2 Top-2 contender pair in QPL/QIN so our two highest-probability
+        # horses are paired first (capturing R2 #1×#3 and R7 #1×#8 instead of getting displaced by noisy 4th-choice EV)
+        pair_exotic_recs.sort(
+            key=lambda x: (
+                (0.08 if x.get("is_core_top2") else 0.0)
+                + x["benter2_prob"] * 0.82
+                + min(0.35, x["ev_pct"] / 100.0) * 0.18
+            ),
+            reverse=True,
+        )
+        fct_exotic_recs.sort(key=lambda x: (x["benter2_prob"] * 0.72 + min(0.45, x["ev_pct"] / 100.0) * 0.28), reverse=True)
+        tri_exotic_recs.sort(key=lambda x: (x["benter2_prob"] * 0.72 + min(0.55, x["ev_pct"] / 100.0) * 0.28), reverse=True)
 
         # Combine diversified exotic recommendations: Top QIN/QPL + Top FCT (二重彩) + Top TRI (單T)
         combined_exotics: List[Dict[str, Any]] = []
@@ -2222,16 +2395,19 @@ class HkjcQuantEngine:
         win_bet_horse_no: Optional[int] = None
         single_bet_horses = set()
 
+        top1_runner = ranked_runners[0] if ranked_runners else None
         win_candidates = sorted(
             [
                 r
-                for r in ranked_runners[:3]
+                for idx_r, r in enumerate(ranked_runners[:3])
                 if r["win_ev_pct"] >= min_ev
                 and r["rec_win_stake_hkd"] >= min_bet_unit
                 and 1.4 <= r["market_win_odds"] <= 18.0
-                and r["benter2_prob"] >= 0.14
+                and r["benter2_prob"] >= 0.15
+                # Vulnerability #5 Fix: Do not bet against our own #1 pick when #1 has >=24% win prob and >5% prob lead
+                and (idx_r == 0 or not top1_runner or (top1_runner["benter2_prob"] - r["benter2_prob"]) <= 0.05)
             ],
-            key=lambda x: (x["benter2_prob"] * 0.70 + (x["win_ev_pct"] / 100.0) * 0.30),
+            key=lambda x: (x["benter2_prob"] * 0.75 + min(0.35, x["win_ev_pct"] / 100.0) * 0.25),
             reverse=True,
         )
         for r in win_candidates[:1]:
@@ -2258,10 +2434,10 @@ class HkjcQuantEngine:
                 if r["horse_no"] != win_bet_horse_no
                 and r["place_ev_pct"] >= min_ev
                 and r["rec_place_stake_hkd"] >= min_bet_unit
-                and r["benter2_place_prob"] >= 0.36
+                and r["benter2_place_prob"] >= 0.30
                 and 1.2 <= r["market_place_odds"] <= 6.5
             ],
-            key=lambda x: (x["benter2_place_prob"] * 0.75 + (x["place_ev_pct"] / 100.0) * 0.25),
+            key=lambda x: (x["benter2_place_prob"] * 0.70 + (x["place_ev_pct"] / 100.0) * 0.30),
             reverse=True,
         )
         for r in place_candidates[:1]:
@@ -2284,14 +2460,19 @@ class HkjcQuantEngine:
             ex_recs = race["exotic_recommendations"]
             # 1) Primary low-takeout pair exotic (QIN / QPL)
             pair_cands = [ex for ex in ex_recs if ex["pool_type"] in ("QUINELLA", "PLACE_QUINELLA")]
-            # 2) High-conviction Forecast (二重彩 FCT, EV >= 18%) or Trio (單T TRI, EV >= 22%)
-            high_ex_cands = [
-                ex
-                for ex in ex_recs
-                if (ex["pool_type"] == "FORECAST" and ex["ev_pct"] >= 18.0 and ex["benter2_prob"] >= 0.042)
-                or (ex["pool_type"] == "TRIO" and ex["ev_pct"] >= 22.0 and ex["benter2_prob"] >= 0.042)
-            ]
-            chosen_ex_list = pair_cands[:1] + high_ex_cands[:2]
+            # 2) At most ONE high-conviction Forecast (二重彩 FCT, EV >= 32%) or Trio (單T TRI, EV >= 35%)
+            # Vulnerability #5 Fix: Strict cap on high-takeout exotics to prevent multi-ticket banker wipeout!
+            high_ex_cands = sorted(
+                [
+                    ex
+                    for ex in ex_recs
+                    if (ex["pool_type"] == "FORECAST" and ex["ev_pct"] >= 32.0 and ex["benter2_prob"] >= 0.052)
+                    or (ex["pool_type"] == "TRIO" and ex["ev_pct"] >= 35.0 and ex["benter2_prob"] >= 0.052)
+                ],
+                key=lambda x: (1 if x["pool_type"] == "TRIO" else 0, x["benter2_prob"]),
+                reverse=True,
+            )
+            chosen_ex_list = (pair_cands[:1] + high_ex_cands[:1])[: max(0, 3 - len(preview_items))]
             for top_ex in chosen_ex_list:
                 pair_nos = {int(x) for x in re.split(r"[-,>]", top_ex["selection_key"]) if x.isdigit()}
                 overlap_cnt = len(pair_nos.intersection(single_bet_horses))
@@ -2377,33 +2558,42 @@ class HkjcQuantEngine:
 
         with self.db._connect() as conn:
             existing_rows = conn.execute(
-                "SELECT pool_type, selection_key FROM hkjc_paper_bets WHERE race_id = ?",
+                "SELECT pool_type, selection_key, trigger_source, stake_hkd FROM hkjc_paper_bets WHERE race_id = ?",
                 (race_id,),
             ).fetchall()
             existing_keys = {(r["pool_type"], r["selection_key"]) for r in existing_rows}
+            existing_auto_count = sum(1 for r in existing_rows if r["trigger_source"] == "AUTO_KELLY")
+            existing_stake_sum = sum(float(r["stake_hkd"] or 0.0) for r in existing_rows)
+
+        # Vulnerability #1 Fix: Strict Single-Lock Guard!
+        # Once AUTO_KELLY has locked its strategy for this race in the T-5m window, NEVER stack additional
+        # bets on subsequent 18-second odds syncs!
+        if existing_auto_count > 0 or (existing_keys and self._has_final_locked_push(race_id)):
+            return []
 
         bankroll = self._get_current_bankroll_hkd(cfg)
         max_race_budget = bankroll * (float(cfg.get("max_race_exposure_pct", 8.0)) / 100.0)
         min_bet_unit = max(10.0, min(100.0, round(bankroll * 0.001, -1)))
-        race_staked = 0.0
+        race_staked = existing_stake_sum
         min_ev = float(cfg.get("min_ev_win_pct", 5.0))
 
         # Identify the Top-3 ranked contenders by Benter 2.0 Win Probability
         ranked_runners = sorted(race["runners"], key=lambda x: x["benter2_prob"], reverse=True)
-        top3_contender_nos = {r["horse_no"] for r in ranked_runners[:3]}
+        top1_runner = ranked_runners[0] if ranked_runners else None
         win_bet_horse_no: Optional[int] = None
 
         # 1. Top Win Bet Candidate: Must be among Top-3 Benter 2.0 contenders with positive Win EV & sensible odds
         win_candidates = sorted(
             [
                 r
-                for r in ranked_runners[:3]
+                for idx_r, r in enumerate(ranked_runners[:3])
                 if r["win_ev_pct"] >= min_ev
                 and r["rec_win_stake_hkd"] >= min_bet_unit
                 and 1.4 <= r["market_win_odds"] <= 18.0
-                and r["benter2_prob"] >= 0.14
+                and r["benter2_prob"] >= 0.15
+                and (idx_r == 0 or not top1_runner or (top1_runner["benter2_prob"] - r["benter2_prob"]) <= 0.05)
             ],
-            key=lambda x: (x["benter2_prob"] * 0.70 + (x["win_ev_pct"] / 100.0) * 0.30),
+            key=lambda x: (x["benter2_prob"] * 0.75 + min(0.35, x["win_ev_pct"] / 100.0) * 0.25),
             reverse=True,
         )
 
@@ -2443,10 +2633,10 @@ class HkjcQuantEngine:
                 if r["horse_no"] != win_bet_horse_no
                 and r["place_ev_pct"] >= min_ev
                 and r["rec_place_stake_hkd"] >= min_bet_unit
-                and r["benter2_place_prob"] >= 0.36
+                and r["benter2_place_prob"] >= 0.30
                 and 1.2 <= r["market_place_odds"] <= 6.5
             ],
-            key=lambda x: (x["benter2_place_prob"] * 0.75 + (x["place_ev_pct"] / 100.0) * 0.25),
+            key=lambda x: (x["benter2_place_prob"] * 0.70 + (x["place_ev_pct"] / 100.0) * 0.30),
             reverse=True,
         )
 
@@ -2477,19 +2667,24 @@ class HkjcQuantEngine:
                     race_staked += stake
                     placed.append(bet)
 
-        # 3. Exotic Candidates (Quinella / Place Quinella + High-Conviction Forecast 二重彩 / Trio 單T)
+        # 3. Exotic Candidates (Quinella / Place Quinella + At Most 1 High-Conviction Forecast 二重彩 / Trio 單T)
         # Apply Multi-Pool Covariance Discount (rho_corr = 0.68) when exotic overlaps with prior bet horses
+        # and cap total auto-bets per race at 3 tickets!
         single_bet_horses = {int(k[1]) for k in existing_keys if k[0] in ("WIN", "PLACE") and str(k[1]).isdigit()}
         if cfg.get("enable_exotic_bets", True) and race.get("exotic_recommendations"):
             ex_recs = race["exotic_recommendations"]
             pair_cands = [ex for ex in ex_recs if ex["pool_type"] in ("QUINELLA", "PLACE_QUINELLA")]
-            high_ex_cands = [
-                ex
-                for ex in ex_recs
-                if (ex["pool_type"] == "FORECAST" and ex["ev_pct"] >= 18.0 and ex["benter2_prob"] >= 0.042)
-                or (ex["pool_type"] == "TRIO" and ex["ev_pct"] >= 22.0 and ex["benter2_prob"] >= 0.042)
-            ]
-            chosen_ex_list = pair_cands[:1] + high_ex_cands[:2]
+            high_ex_cands = sorted(
+                [
+                    ex
+                    for ex in ex_recs
+                    if (ex["pool_type"] == "FORECAST" and ex["ev_pct"] >= 32.0 and ex["benter2_prob"] >= 0.052)
+                    or (ex["pool_type"] == "TRIO" and ex["ev_pct"] >= 35.0 and ex["benter2_prob"] >= 0.052)
+                ],
+                key=lambda x: (1 if x["pool_type"] == "TRIO" else 0, x["benter2_prob"]),
+                reverse=True,
+            )
+            chosen_ex_list = (pair_cands[:1] + high_ex_cands[:1])[: max(0, 3 - len(placed))]
             for top_ex in chosen_ex_list:
                 p_type = top_ex["pool_type"]
                 s_key = top_ex["selection_key"]
@@ -3277,22 +3472,16 @@ class HkjcQuantEngine:
             submodel_gradients[sk] = round(pl_grad, 4)
 
         # =====================================================================
-        # 2. FAST INTRADAY LAYER: FULL-FIELD RESIDUALS (TRACK BIAS, PACE & JOCKEY/TRAINER FORM)
+        # 2. FAST INTRADAY LAYER: FULL-FIELD ZERO-MEAN RANK RESIDUALS (TRACK BIAS, PACE & JOCKEY/TRAINER FORM)
         # =====================================================================
-        # Compute expected finishing rank & expected beaten lengths from pre-race probabilities
-        # vs actual finishing position & actual beaten lengths for ALL N horses.
+        # Vulnerability #3 & #4 Fix: Use exact pre-race predicted rank (1..N) vs actual finishing position (1..N)
+        # so that sum(perf_residual) == 0.0 across the field (eliminating the compression bias where 9th-12th
+        # finishers always had negative residuals and distorted day_draw_bias / day_pace_bias).
         b2_sorted_probs = sorted(runners, key=lambda x: x["benter2_prob"], reverse=True)
-        expected_rank_map: Dict[int, float] = {}
-        for r_obj in runners:
-            h_no = int(r_obj["horse_no"])
-            p_h = max(1e-4, float(r_obj["benter2_prob"]))
-            # Expected rank E[R_i] = 1 + sum_{j != i} P(j beats i)
-            exp_r = 1.0 + sum(
-                max(1e-4, float(other["benter2_prob"])) / (p_h + max(1e-4, float(other["benter2_prob"])))
-                for other in runners
-                if int(other["horse_no"]) != h_no
-            )
-            expected_rank_map[h_no] = exp_r
+        expected_rank_map: Dict[int, float] = {
+            int(r_obj["horse_no"]): float(rank_idx + 1)
+            for rank_idx, r_obj in enumerate(b2_sorted_probs)
+        }
 
         avg_field_draw = sum(float(r["draw"]) for r in runners) / max(1, len(runners))
         draw_cov_num = 0.0
@@ -3309,23 +3498,24 @@ class HkjcQuantEngine:
             h_no = int(r_obj["horse_no"])
             actual_pos = float(item["pos"])
             exp_pos = expected_rank_map.get(h_no, (n_ordered + 1) / 2.0)
-            # Positive residual = horse outperformed pre-race expectation (finished better than expected rank)
+            # Zero-mean rank residual: positive = horse beat its pre-race predicted rank
             perf_residual = (exp_pos - actual_pos) / max(1.0, n_ordered / 2.0)
             top_outperformers.append((perf_residual, r_obj, item["beaten_len"]))
 
-            # Full-field draw residual correlation (weighted by beaten-length relevance)
-            rel_w = 1.0 / (1.0 + 0.12 * item["beaten_len"])
-            centered_draw = (float(r_obj["draw"]) - avg_field_draw) / 6.0
+            # Weight top finishers & close finishes higher so winner/placer track lanes drive the bias signal
+            rel_w = (1.6 if actual_pos <= 3 else 1.15 if actual_pos <= 6 else 0.65) / (1.0 + 0.10 * item["beaten_len"])
+            centered_draw = (float(r_obj["draw"]) - avg_field_draw) / 5.5
             draw_cov_num += rel_w * perf_residual * centered_draw
-            draw_cov_den += rel_w * (centered_draw ** 2 + 0.25)
+            draw_cov_den += rel_w * (centered_draw ** 2 + 0.20)
 
-            # Full-field in-running pace residual correlation
+            # Full-field in-running pace residual correlation (+ = closers/midfield favored, - = front-runners favored)
             in_run_nums = [int(x) for x in re.findall(r"\d+", item["in_running"])]
             first_call = float(in_run_nums[0]) if in_run_nums else float(r_obj["draw"])
             pos_gained = (first_call - actual_pos) if in_run_nums else 0.0
             centered_early = (first_call - (n_ordered + 1) / 2.0) / 5.0
-            pace_cov_num += rel_w * (perf_residual * centered_early + 0.08 * (pos_gained / 5.0))
-            pace_cov_den += rel_w * (centered_early ** 2 + 0.25)
+            top3_gain_signal = (pos_gained / 6.0) if (in_run_nums and actual_pos <= 3) else 0.0
+            pace_cov_num += rel_w * (perf_residual * centered_early + 0.35 * top3_gain_signal)
+            pace_cov_den += rel_w * (centered_early ** 2 + 0.20)
 
             # Fast Intraday Jockey & Trainer Hotness EMA update
             j_key = str(r_obj.get("jockey") or "").strip()
@@ -3649,17 +3839,23 @@ class HkjcQuantEngine:
         if not cfg.get("auto_live_settle_enabled", True):
             return None
 
-        # 2. If the meeting is currently LIVE (at least one race is still OPEN/DEFINED on HKJC),
-        # automatically settle any earlier race that has OFFICIAL DIVIDENDS & RESULTS on HKJC!
+        # 2. If the meeting is currently LIVE (at least one race is still OPEN/DEFINED on HKJC or at least one race
+        # has already been settled in this meeting), automatically settle any race that has OFFICIAL DIVIDENDS & RESULTS!
         has_future_open_on_hkjc = any(
             r.get("hkjc_status") in ("OPEN", "DEFINED", "CLOSED", "INTERIM", "DECLARED")
             and not any(ru.get("_actual_final_pos") == 1 for ru in r["runners"])
             for r in self.races
         )
-        if has_future_open_on_hkjc:
+        has_settled_in_meeting = any(r["status"] == "SETTLED" for r in self.races)
+        if has_future_open_on_hkjc or has_settled_in_meeting:
             for r in self.races:
                 has_win_div = bool((r.get("_official_divs_raw") or {}).get("WIN")) or r.get("hkjc_status") == "RESULT"
                 if r["status"] != "SETTLED" and has_win_div and any(ru.get("_actual_final_pos") == 1 for ru in r["runners"]):
+                    # Vulnerability #4 Fix: Ensure LocalResults.aspx is synced before settling so in_running & beaten_lengths
+                    # are available for the Fast Intraday Pace/Draw residual update!
+                    if not (r.get("_lr_cache") or {}).get("perf_by_no"):
+                        await self.sync_live_hkjc_data(force_refresh_cards=False)
+                        r = next((x for x in self.races if x["race_id"] == r["race_id"]), r)
                     res = self.settle_race_and_evolve(r["race_id"])
                     await self.auto_push_after_settlement(res)
                     return res
