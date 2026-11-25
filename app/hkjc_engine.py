@@ -878,7 +878,7 @@ class HkjcQuantEngine:
                     m_date = meeting["date"]       # e.g. '2026-11-22'
                     venue = meeting["venueCode"]   # e.g. 'ST' or 'HV'
 
-                    # 2. Concurrently fetch all live PM Pools (WIN, PLA, QIN, QPL) and Result Dividends + JKC/TNC
+                    # 2. Concurrently fetch all live PM Pools (WIN, PLA, QIN, QPL, FCT, TRI) and Result Dividends + JKC/TNC
                     pool_task = session.post(
                         HKJC_GRAPHQL_URL,
                         json={
@@ -886,7 +886,7 @@ class HkjcQuantEngine:
                             "variables": {
                                 "date": m_date,
                                 "venueCode": venue,
-                                "oddsTypes": ["WIN", "PLA", "QIN", "QPL"],
+                                "oddsTypes": ["WIN", "PLA", "QIN", "QPL", "FCT", "TRI"],
                             },
                         },
                         timeout=12,
@@ -900,7 +900,7 @@ class HkjcQuantEngine:
                                 "venueCode": venue,
                                 "foOddsTypes": ["JKC", "TNC"],
                                 "foFilter": ["top"],
-                                "resultOddsType": ["WIN", "PLA", "QIN", "QPL", "TCE", "TRI"],
+                                "resultOddsType": ["WIN", "PLA", "QIN", "QPL", "FCT", "TCE", "TRI"],
                             },
                         },
                         timeout=12,
@@ -963,6 +963,7 @@ class HkjcQuantEngine:
                             or not existing_lr
                             or not existing_lr.get("perf_by_no")
                             or not existing_lr.get("incidents_by_no")
+                            or not existing_lr.get("parsed_divs")
                         ):
                             lr_tasks.append(self._fetch_and_cache_local_results(session, slash_date, venue, r_no, lr_cache_key))
 
@@ -1078,15 +1079,35 @@ class HkjcQuantEngine:
                         "final_win_odds": cols[11] if len(cols) > 11 else "",
                     }
 
-        # Extract official Stewards' Incidents (競賽事件)
+        # Extract official Stewards' Incidents (競賽事件) & Official Dividends Table (派彩)
         incidents_by_no: Dict[int, str] = {}
+        parsed_divs: Dict[str, List[Dict[str, str]]] = {}
+        pool_cn_map = {
+            "獨贏": "WIN",
+            "位置": "PLA",
+            "連贏": "QIN",
+            "位置Q": "QPL",
+            "二重彩": "FCT",
+            "單T": "TRI",
+            "三重彩": "TCE",
+        }
         for t in re.findall(r"<table[^>]*>(.*?)</table>", html, re.S):
             if "競賽事件" in t:
                 for rw in re.findall(r"<tr[^>]*>(.*?)</tr>", t, re.S)[1:]:
                     cols = [_strip_html(c) for c in re.findall(r"<td[^>]*>(.*?)</td>", rw, re.S)]
                     if len(cols) >= 4 and cols[1].isdigit():
                         incidents_by_no[int(cols[1])] = cols[3]
-                break
+            elif "派彩" in t and "獨贏" in t:
+                curr_pool = ""
+                for rw in re.findall(r"<tr[^>]*>(.*?)</tr>", t, re.S):
+                    cols = [_strip_html(c) for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", rw, re.S)]
+                    if len(cols) == 3 and cols[0] in pool_cn_map:
+                        curr_pool = pool_cn_map[cols[0]]
+                        parsed_divs.setdefault(curr_pool, []).append({"winComb": cols[1], "div": cols[2]})
+                    elif len(cols) == 2 and curr_pool and re.search(r"\d", cols[0]):
+                        parsed_divs.setdefault(curr_pool, []).append({"winComb": cols[0], "div": cols[1]})
+                    elif len(cols) == 3 and cols[0] not in pool_cn_map and cols[0] != "彩池":
+                        curr_pool = ""
 
         if perf_by_no:
             self._set_cache(
@@ -1095,6 +1116,7 @@ class HkjcQuantEngine:
                     "sectional_times": sec_times,
                     "perf_by_no": {str(k): v for k, v in perf_by_no.items()},
                     "incidents_by_no": {str(k): v for k, v in incidents_by_no.items()},
+                    "parsed_divs": parsed_divs,
                 },
             )
 
@@ -1172,6 +1194,18 @@ class HkjcQuantEngine:
                 parts = [int(x) for x in str(n.get("combString", "")).split(",") if x.isdigit()]
                 if len(parts) == 2:
                     qpl_nodes[(min(parts[0], parts[1]), max(parts[0], parts[1]))] = n
+
+            fct_nodes: Dict[Tuple[int, int], Dict[str, Any]] = {}
+            for n in r_pools.get("FCT", {}).get("oddsNodes") or []:
+                parts = [int(x) for x in str(n.get("combString", "")).split(",") if x.isdigit()]
+                if len(parts) == 2:
+                    fct_nodes[(parts[0], parts[1])] = n
+
+            tri_nodes: Dict[Tuple[int, int, int], Dict[str, Any]] = {}
+            for n in r_pools.get("TRI", {}).get("oddsNodes") or []:
+                parts = sorted(int(x) for x in str(n.get("combString", "")).split(",") if x.isdigit())
+                if len(parts) == 3:
+                    tri_nodes[(parts[0], parts[1], parts[2])] = n
 
             # Calculate each horse's marginal implied support in the QIN pool (Cross-pool smart money!)
             qin_marginal_support: Dict[int, float] = {}
@@ -1422,6 +1456,16 @@ class HkjcQuantEngine:
                 "_qpl_odds_map": {
                     f"{k[0]}-{k[1]}": float(v.get("oddsValue") or 0.0)
                     for k, v in qpl_nodes.items()
+                    if str(v.get("oddsValue", "")).replace(".", "", 1).isdigit()
+                },
+                "_fct_odds_map": {
+                    f"{k[0]}>{k[1]}": float(v.get("oddsValue") or 0.0)
+                    for k, v in fct_nodes.items()
+                    if str(v.get("oddsValue", "")).replace(".", "", 1).isdigit()
+                },
+                "_tri_odds_map": {
+                    f"{k[0]}-{k[1]}-{k[2]}": float(v.get("oddsValue") or 0.0)
+                    for k, v in tri_nodes.items()
                     if str(v.get("oddsValue", "")).replace(".", "", 1).isdigit()
                 },
                 "_official_divs_raw": r_divs,
@@ -1849,7 +1893,8 @@ class HkjcQuantEngine:
         norm_b2 = sum(shrunk_b2)
         b2_probs = [p / norm_b2 for p in shrunk_b2]
 
-        # 4. Discounted Harville (theta_2, theta_3) Top-3 Place, Quinella (QIN) & Place Quinella (QPL) Probabilities
+        # 4. Discounted Harville (theta_2, theta_3) Top-3 Place, Quinella (QIN), Place Quinella (QPL),
+        # Forecast (FCT 二重彩) & Trio (TRI 單T) Probabilities
         # Note HKJC official rule: When starter count <= 6, Place pays Top-2 only and QPL is not offered.
         n = len(runners)
         place_pays_three = n >= 7
@@ -1857,6 +1902,10 @@ class HkjcQuantEngine:
         p_third = [0.0] * n
         qin_prob_map: Dict[str, float] = {}
         qpl_prob_map: Dict[str, float] = {}
+        fct_prob_map: Dict[str, float] = {}
+        fct_h1_map: Dict[str, float] = {}
+        tri_prob_map: Dict[str, float] = {}
+        tri_h1_map: Dict[str, float] = {}
 
         place_affinity = []
         for idx, r in enumerate(runners):
@@ -1869,7 +1918,9 @@ class HkjcQuantEngine:
 
         for i in range(n):
             pi = b2_probs[i]
+            pi_b1 = b1_probs[i]
             denom2 = sum((b2_probs[k] ** theta_2) * place_affinity[k] for k in range(n) if k != i)
+            denom2_b1 = max(1e-6, 1.0 - pi_b1)
             if denom2 <= 0:
                 continue
             for j in range(n):
@@ -1877,20 +1928,23 @@ class HkjcQuantEngine:
                     continue
                 p_j_given_i = ((b2_probs[j] ** theta_2) * place_affinity[j]) / denom2
                 p_ij = pi * p_j_given_i
+                p_ij_b1 = pi_b1 * (b1_probs[j] / denom2_b1)
                 p_second[j] += p_ij
 
                 hi, hj = runners[i]["horse_no"], runners[j]["horse_no"]
+                fct_key = f"{hi}>{hj}"
+                fct_prob_map[fct_key] = p_ij
+                fct_h1_map[fct_key] = p_ij_b1
+
                 pair_str = f"{min(hi, hj)}-{max(hi, hj)}"
                 qin_prob_map[pair_str] = qin_prob_map.get(pair_str, 0.0) + p_ij
-
-                if not place_pays_three:
-                    continue
 
                 denom3 = sum(
                     (b2_probs[m] ** theta_3) * place_affinity[m]
                     for m in range(n)
                     if m != i and m != j
                 )
+                denom3_b1 = max(1e-6, 1.0 - pi_b1 - b1_probs[j])
                 if denom3 <= 0:
                     continue
                 for m in range(n):
@@ -1898,12 +1952,20 @@ class HkjcQuantEngine:
                         continue
                     p_m_given_ij = ((b2_probs[m] ** theta_3) * place_affinity[m]) / denom3
                     p_ijm = p_ij * p_m_given_ij
-                    p_third[m] += p_ijm
+                    p_ijm_b1 = p_ij_b1 * (b1_probs[m] / denom3_b1)
+                    if place_pays_three:
+                        p_third[m] += p_ijm
 
                     hm = runners[m]["horse_no"]
-                    for a_no, b_no in ((hi, hj), (hi, hm), (hj, hm)):
-                        pq_str = f"{min(a_no, b_no)}-{max(a_no, b_no)}"
-                        qpl_prob_map[pq_str] = qpl_prob_map.get(pq_str, 0.0) + p_ijm
+                    trio_sorted = sorted((hi, hj, hm))
+                    trio_key = f"{trio_sorted[0]}-{trio_sorted[1]}-{trio_sorted[2]}"
+                    tri_prob_map[trio_key] = tri_prob_map.get(trio_key, 0.0) + p_ijm
+                    tri_h1_map[trio_key] = tri_h1_map.get(trio_key, 0.0) + p_ijm_b1
+
+                    if place_pays_three:
+                        for a_no, b_no in ((hi, hj), (hi, hm), (hj, hm)):
+                            pq_str = f"{min(a_no, b_no)}-{max(a_no, b_no)}"
+                            qpl_prob_map[pq_str] = qpl_prob_map.get(pq_str, 0.0) + p_ijm
 
         if place_pays_three:
             qpl_total = sum(qpl_prob_map.values())
@@ -1976,17 +2038,23 @@ class HkjcQuantEngine:
             r["rec_place_stake_hkd"] = max(0.0, rec_pla_stake)
             r["key_signals"] = key_signals[:3]
 
-        # 6. Evaluate Real Quinella (QIN) & Place Quinella (QPL) Pools using Real HKJC Pool Odds!
-        # Anchor candidate pairs around the top-4 Benter 2.0 ranked horses so we only bet high-hit-rate pairs.
+        # 6. Evaluate Real Quinella (QIN), Place Quinella (QPL), Forecast (FCT 二重彩) & Trio (TRI 單T) Pools!
         runner_by_no = {r["horse_no"]: r for r in runners}
-        top4_nos = {
-            r["horse_no"]
-            for r in sorted(runners, key=lambda x: x["benter2_prob"], reverse=True)[:4]
-        }
+        sorted_b2_runners = sorted(runners, key=lambda x: x["benter2_prob"], reverse=True)
+        top3_nos = {r["horse_no"] for r in sorted_b2_runners[:3]}
+        top4_nos = {r["horse_no"] for r in sorted_b2_runners[:4]}
+        top5_nos = {r["horse_no"] for r in sorted_b2_runners[:5]}
         qin_odds_map = race.get("_qin_odds_map") or {}
         qpl_odds_map = race.get("_qpl_odds_map") or {}
+        fct_odds_map = race.get("_fct_odds_map") or {}
+        tri_odds_map = race.get("_tri_odds_map") or {}
         min_ev_exotic = float(cfg.get("min_ev_exotic_pct", 12.0))
-        exotic_recs: List[Dict[str, Any]] = []
+        pair_exotic_recs: List[Dict[str, Any]] = []
+        fct_exotic_recs: List[Dict[str, Any]] = []
+        tri_exotic_recs: List[Dict[str, Any]] = []
+
+        ex_cap = max(20.0, min(1000.0, round(bankroll * 0.01, -1)))
+        ex_floor = max(10.0, min(200.0, round(bankroll * 0.002, -1)))
 
         top_pairs = sorted(qin_prob_map.items(), key=lambda x: x[1], reverse=True)[:15]
         for pair_key, p_qin_b2 in top_pairs:
@@ -2007,7 +2075,6 @@ class HkjcQuantEngine:
             qin_ev = round((p_qin_b2 * real_qin_odds - 1.0) * 100.0, 1) if real_qin_odds else -99.0
             qpl_ev = round((p_qpl_b2 * real_qpl_odds - 1.0) * 100.0, 1) if real_qpl_odds else -99.0
 
-            # Prefer Place Quinella (位置Q) when both horses are Top-3/4 contenders and QPL EV >= 5%
             if place_pays_three and real_qpl_odds and qpl_ev >= max(4.0, min_ev_exotic * 0.5) and p_qpl_b2 >= 0.16:
                 pool_type = "PLACE_QUINELLA"
                 pool_label = "位置Q (QPL)"
@@ -2023,31 +2090,120 @@ class HkjcQuantEngine:
                 chosen_odds = real_qin_odds
                 chosen_ev = qin_ev
             else:
-                continue
+                pool_type = ""
 
-            b_ex = max(0.4, chosen_odds - 1.0)
-            k_ex = max(0.0, (chosen_p * (b_ex + 1.0) - 1.0) / b_ex)
-            ex_cap = max(20.0, min(1000.0, round(bankroll * 0.01, -1)))
-            ex_floor = max(10.0, min(200.0, round(bankroll * 0.002, -1)))
-            stake_ex = round(min(ex_cap, max(ex_floor, bankroll * k_ex * (kelly_frac * 0.55))), -1)
+            if pool_type:
+                b_ex = max(0.4, chosen_odds - 1.0)
+                k_ex = max(0.0, (chosen_p * (b_ex + 1.0) - 1.0) / b_ex)
+                stake_ex = round(min(ex_cap, max(ex_floor, bankroll * k_ex * (kelly_frac * 0.55))), -1)
+                pair_exotic_recs.append(
+                    {
+                        "pool_type": pool_type,
+                        "pool_label": pool_label,
+                        "selection_key": pair_key,
+                        "selection_label": f"#{h1} {r1['horse_name_ch']} × #{h2} {r2['horse_name_ch']}",
+                        "benter2_prob": round(chosen_p, 4),
+                        "harville1_prob": round(chosen_h1, 4),
+                        "market_odds": chosen_odds,
+                        "ev_pct": chosen_ev,
+                        "rec_stake_hkd": stake_ex,
+                        "rationale": f"馬會實時{pool_label}賠率 {chosen_odds}x · Top-4 主力互串 (命中率 {(chosen_p*100):.1f}%, EV +{chosen_ev}%)",
+                    }
+                )
 
-            exotic_recs.append(
-                {
-                    "pool_type": pool_type,
-                    "pool_label": pool_label,
-                    "selection_key": pair_key,
-                    "selection_label": f"#{h1} {r1['horse_name_ch']} × #{h2} {r2['horse_name_ch']}",
-                    "benter2_prob": round(chosen_p, 4),
-                    "harville1_prob": round(chosen_h1, 4),
-                    "market_odds": chosen_odds,
-                    "ev_pct": chosen_ev,
-                    "rec_stake_hkd": stake_ex,
-                    "rationale": f"馬會實時{pool_label}賠率 {chosen_odds}x · Top-4 主力互串 (命中率 {(chosen_p*100):.1f}%, EV +{chosen_ev}%)",
-                }
-            )
+            # Evaluate Ordered Forecast (二重彩 FCT: 19.5% takeout — requires asymmetric banker-leg edge & EV >= 14%)
+            for a_no, b_no, ra, rb in ((h1, h2, r1, r2), (h2, h1, r2, r1)):
+                f_key = f"{a_no}>{b_no}"
+                rev_key = f"{b_no}>{a_no}"
+                p_fct_b2 = fct_prob_map.get(f_key, 0.0)
+                p_fct_rev = fct_prob_map.get(rev_key, 0.0)
+                real_fct_odds = fct_odds_map.get(f_key)
+                if not real_fct_odds and real_qin_odds and p_qin_b2 > 0:
+                    # Fallback estimate when FCT pool not yet open
+                    real_fct_odds = round((real_qin_odds * 0.975) * (p_qin_b2 / max(0.005, p_fct_b2)), 1)
+                if not real_fct_odds or p_fct_b2 < 0.042:
+                    continue
+                # Require ordered asymmetry (A beats B more likely than B beats A, or B is a consistent Grinder)
+                if p_fct_b2 < p_fct_rev * 1.12 and rb["style_code"] != "GRINDER":
+                    continue
+                fct_ev = round((p_fct_b2 * real_fct_odds - 1.0) * 100.0, 1)
+                if fct_ev >= max(14.0, min_ev_exotic * 1.15) and real_fct_odds <= 120.0:
+                    b_f = max(1.0, real_fct_odds - 1.0)
+                    k_f = max(0.0, (p_fct_b2 * (b_f + 1.0) - 1.0) / b_f)
+                    fct_cap = max(20.0, min(700.0, round(bankroll * 0.007, -1)))
+                    stake_fct = round(min(fct_cap, max(min_bet_unit, bankroll * k_f * (kelly_frac * 0.40))), -1)
+                    fct_exotic_recs.append(
+                        {
+                            "pool_type": "FORECAST",
+                            "pool_label": "二重彩 (FCT)",
+                            "selection_key": f_key,
+                            "selection_label": f"#{a_no} {ra['horse_name_ch']} 勝 → #{b_no} {rb['horse_name_ch']} 亞",
+                            "benter2_prob": round(p_fct_b2, 4),
+                            "harville1_prob": round(fct_h1_map.get(f_key, p_fct_b2 * 0.85), 4),
+                            "market_odds": real_fct_odds,
+                            "ev_pct": fct_ev,
+                            "rec_stake_hkd": stake_fct,
+                            "rationale": f"馬會實時二重彩 {real_fct_odds}x · 強膽 #{a_no} 配穩腳 #{b_no} (有序命中率 {(p_fct_b2*100):.1f}%, EV +{fct_ev}%)",
+                        }
+                    )
 
-        exotic_recs.sort(key=lambda x: (x["benter2_prob"] * 0.70 + (x["ev_pct"] / 100.0) * 0.30), reverse=True)
-        race["exotic_recommendations"] = exotic_recs[:3]
+        # Evaluate Trio (單T TRI: 22.0% takeout — anchored on Top-3/4/5 contenders, requires EV >= 18%)
+        if n >= 4:
+            top_trios = sorted(tri_prob_map.items(), key=lambda x: x[1], reverse=True)[:25]
+            for trio_key, p_tri_b2 in top_trios:
+                t_nos = [int(x) for x in trio_key.split("-")]
+                if not all(h in top5_nos for h in t_nos):
+                    continue
+                if sum(1 for h in t_nos if h in top3_nos) < 2:
+                    continue
+                if p_tri_b2 < 0.042:
+                    continue
+                real_tri_odds = tri_odds_map.get(trio_key)
+                if not real_tri_odds:
+                    real_tri_odds = round(min(300.0, max(3.5, 0.78 / max(0.005, tri_h1_map.get(trio_key, p_tri_b2 * 0.85)))), 1)
+                tri_ev = round((p_tri_b2 * real_tri_odds - 1.0) * 100.0, 1)
+                if tri_ev >= max(18.0, min_ev_exotic * 1.4) and real_tri_odds <= 180.0:
+                    rt_objs = [runner_by_no[h] for h in t_nos if h in runner_by_no]
+                    if len(rt_objs) != 3:
+                        continue
+                    b_t = max(1.0, real_tri_odds - 1.0)
+                    k_t = max(0.0, (p_tri_b2 * (b_t + 1.0) - 1.0) / b_t)
+                    tri_cap = max(20.0, min(500.0, round(bankroll * 0.005, -1)))
+                    stake_tri = round(min(tri_cap, max(min_bet_unit, bankroll * k_t * (kelly_frac * 0.32))), -1)
+                    tri_exotic_recs.append(
+                        {
+                            "pool_type": "TRIO",
+                            "pool_label": "單T (TRI)",
+                            "selection_key": trio_key,
+                            "selection_label": f"#{t_nos[0]} {rt_objs[0]['horse_name_ch']} × #{t_nos[1]} {rt_objs[1]['horse_name_ch']} × #{t_nos[2]} {rt_objs[2]['horse_name_ch']}",
+                            "benter2_prob": round(p_tri_b2, 4),
+                            "harville1_prob": round(tri_h1_map.get(trio_key, p_tri_b2 * 0.82), 4),
+                            "market_odds": real_tri_odds,
+                            "ev_pct": tri_ev,
+                            "rec_stake_hkd": stake_tri,
+                            "rationale": f"馬會實時單T {real_tri_odds}x · 主力膽拖三甲組合 (命中率 {(p_tri_b2*100):.1f}%, EV +{tri_ev}%)",
+                        }
+                    )
+
+        pair_exotic_recs.sort(key=lambda x: (x["benter2_prob"] * 0.70 + (x["ev_pct"] / 100.0) * 0.30), reverse=True)
+        fct_exotic_recs.sort(key=lambda x: (x["benter2_prob"] * 0.65 + (x["ev_pct"] / 100.0) * 0.35), reverse=True)
+        tri_exotic_recs.sort(key=lambda x: (x["benter2_prob"] * 0.65 + (x["ev_pct"] / 100.0) * 0.35), reverse=True)
+
+        # Combine diversified exotic recommendations: Top QIN/QPL + Top FCT (二重彩) + Top TRI (單T)
+        combined_exotics: List[Dict[str, Any]] = []
+        if pair_exotic_recs:
+            combined_exotics.append(pair_exotic_recs[0])
+        if fct_exotic_recs:
+            combined_exotics.append(fct_exotic_recs[0])
+        if tri_exotic_recs:
+            combined_exotics.append(tri_exotic_recs[0])
+        for extra_ex in (pair_exotic_recs[1:] + fct_exotic_recs[1:] + tri_exotic_recs[1:]):
+            if len(combined_exotics) >= 4:
+                break
+            if extra_ex not in combined_exotics:
+                combined_exotics.append(extra_ex)
+
+        race["exotic_recommendations"] = combined_exotics[:4]
         race["recommended_bets_preview"] = self._build_strategy_preview_items(race, cfg, bankroll)
 
     def _build_strategy_preview_items(
@@ -2125,23 +2281,41 @@ class HkjcQuantEngine:
                 race_staked += stake
 
         if cfg.get("enable_exotic_bets", True) and race.get("exotic_recommendations"):
-            for top_ex in race["exotic_recommendations"][:1]:
-                pair_nos = {int(x) for x in top_ex["selection_key"].split("-") if x.isdigit()}
+            ex_recs = race["exotic_recommendations"]
+            # 1) Primary low-takeout pair exotic (QIN / QPL)
+            pair_cands = [ex for ex in ex_recs if ex["pool_type"] in ("QUINELLA", "PLACE_QUINELLA")]
+            # 2) High-conviction Forecast (二重彩 FCT, EV >= 18%) or Trio (單T TRI, EV >= 22%)
+            high_ex_cands = [
+                ex
+                for ex in ex_recs
+                if (ex["pool_type"] == "FORECAST" and ex["ev_pct"] >= 18.0 and ex["benter2_prob"] >= 0.055)
+                or (ex["pool_type"] == "TRIO" and ex["ev_pct"] >= 22.0 and ex["benter2_prob"] >= 0.055)
+            ]
+            chosen_ex_list = pair_cands[:1] + high_ex_cands[:1]
+            for top_ex in chosen_ex_list:
+                pair_nos = {int(x) for x in re.split(r"[-,>]", top_ex["selection_key"]) if x.isdigit()}
                 overlap_cnt = len(pair_nos.intersection(single_bet_horses))
                 corr_discount = 0.68 if overlap_cnt >= 1 else 1.0
                 raw_ex_stake = round(top_ex["rec_stake_hkd"] * corr_discount, -1)
                 stake = min(raw_ex_stake, max(0.0, max_race_budget - race_staked))
                 if stake >= min_bet_unit:
+                    p_lbl_map = {
+                        "QUINELLA": "連贏",
+                        "PLACE_QUINELLA": "位置Q",
+                        "FORECAST": "二重彩",
+                        "TRIO": "單T",
+                    }
                     preview_items.append(
                         {
                             "pool_type": top_ex["pool_type"],
-                            "pool_label": "連贏" if top_ex["pool_type"] == "QUINELLA" else "位置Q",
+                            "pool_label": p_lbl_map.get(top_ex["pool_type"], top_ex["pool_label"]),
                             "selection_key": top_ex["selection_key"],
                             "selection_label": top_ex["selection_label"],
                             "stake_hkd": stake,
                             "ev_pct": top_ex["ev_pct"],
                         }
                     )
+                    single_bet_horses.update(pair_nos)
                     race_staked += stake
 
         return preview_items
@@ -2303,15 +2477,24 @@ class HkjcQuantEngine:
                     race_staked += stake
                     placed.append(bet)
 
-        # 3. Top Exotic Candidate (Quinella / Place Quinella anchored on Top-3/4 Benter 2.0 horses)
-        # Audit Fix #4: Apply Multi-Pool Covariance Discount (rho_corr = 0.68) when exotic pair overlaps with single bet horse
+        # 3. Exotic Candidates (Quinella / Place Quinella + High-Conviction Forecast 二重彩 / Trio 單T)
+        # Apply Multi-Pool Covariance Discount (rho_corr = 0.68) when exotic overlaps with prior bet horses
         single_bet_horses = {int(k[1]) for k in existing_keys if k[0] in ("WIN", "PLACE") and str(k[1]).isdigit()}
         if cfg.get("enable_exotic_bets", True) and race.get("exotic_recommendations"):
-            for top_ex in race["exotic_recommendations"][:1]:
+            ex_recs = race["exotic_recommendations"]
+            pair_cands = [ex for ex in ex_recs if ex["pool_type"] in ("QUINELLA", "PLACE_QUINELLA")]
+            high_ex_cands = [
+                ex
+                for ex in ex_recs
+                if (ex["pool_type"] == "FORECAST" and ex["ev_pct"] >= 18.0 and ex["benter2_prob"] >= 0.055)
+                or (ex["pool_type"] == "TRIO" and ex["ev_pct"] >= 22.0 and ex["benter2_prob"] >= 0.055)
+            ]
+            chosen_ex_list = pair_cands[:1] + high_ex_cands[:1]
+            for top_ex in chosen_ex_list:
                 p_type = top_ex["pool_type"]
                 s_key = top_ex["selection_key"]
                 if (p_type, s_key) not in existing_keys:
-                    pair_nos = {int(x) for x in s_key.split("-") if x.isdigit()}
+                    pair_nos = {int(x) for x in re.split(r"[-,>]", s_key) if x.isdigit()}
                     overlap_cnt = len(pair_nos.intersection(single_bet_horses))
                     corr_discount = 0.68 if overlap_cnt >= 1 else 1.0
                     raw_ex_stake = round(top_ex["rec_stake_hkd"] * corr_discount, -1)
@@ -2331,11 +2514,12 @@ class HkjcQuantEngine:
                             market_odds=top_ex["market_odds"],
                             predicted_closing_odds=top_ex["market_odds"],
                             expected_value_pct=top_ex["ev_pct"],
-                            kelly_fraction_used=round(float(cfg.get("kelly_fraction", 0.25)) * 0.55 * corr_discount, 3),
+                            kelly_fraction_used=round(float(cfg.get("kelly_fraction", 0.25)) * 0.50 * corr_discount, 3),
                             stake_hkd=stake,
                             rationale=top_ex["rationale"] + (" · 已套用跨彩池協方差折減風控" if overlap_cnt >= 1 else ""),
                         )
                         existing_keys.add((p_type, s_key))
+                        single_bet_horses.update(pair_nos)
                         race_staked += stake
                         placed.append(bet)
 
@@ -2429,6 +2613,60 @@ class HkjcQuantEngine:
             ev = runner["win_ev_pct"] if pool_type == "WIN" else runner["place_ev_pct"]
             label = f"#{runner['horse_no']} {runner['horse_name_ch']} ({'位置' if pool_type == 'PLACE' else '獨贏'})"
             rationale = "手動策略注單 — " + " ＋ ".join(runner.get("key_signals") or ["Benter 2.0 定價分析"])
+        elif pool_type == "TRIO":
+            parts = sorted({int(x.strip()) for x in re.split(r"[-,>]", selection_key) if x.strip().isdigit()})
+            if len(parts) != 3:
+                raise ValueError("單T (TRI) 請選擇三匹不同馬號 (例如 1-2-4)")
+            selection_key = f"{parts[0]}-{parts[1]}-{parts[2]}"
+            rt_objs = [next((ru for ru in race["runners"] if ru["horse_no"] == h), None) for h in parts]
+            if any(x is None for x in rt_objs):
+                raise ValueError("找不到指定馬號")
+            ex_match = next(
+                (ex for ex in (race.get("exotic_recommendations") or []) if ex["selection_key"] == selection_key and ex["pool_type"] == "TRIO"),
+                None,
+            )
+            if ex_match:
+                b2_p = ex_match["benter2_prob"]
+                b1_p = ex_match["harville1_prob"]
+                m_odds = ex_match["market_odds"]
+                ev = ex_match["ev_pct"]
+                rationale = ex_match["rationale"]
+            else:
+                m_odds = (race.get("_tri_odds_map") or {}).get(selection_key) or 35.0
+                b2_p = round(min(0.65, rt_objs[0]["benter2_place_prob"] * rt_objs[1]["benter2_place_prob"] * rt_objs[2]["benter2_place_prob"] * 1.8), 4)
+                b1_p = round(b2_p * 0.82, 4)
+                ev = round((b2_p * m_odds - 1.0) * 100.0, 1)
+                rationale = "手動單T (TRI) 策略注單"
+            c_odds = m_odds
+            label = f"#{parts[0]} {rt_objs[0]['horse_name_ch']} × #{parts[1]} {rt_objs[1]['horse_name_ch']} × #{parts[2]} {rt_objs[2]['horse_name_ch']} (單T TRI)"
+        elif pool_type == "FORECAST":
+            parts = [int(x.strip()) for x in re.split(r"[-,>]", selection_key) if x.strip().isdigit()]
+            if len(parts) != 2 or parts[0] == parts[1]:
+                raise ValueError("二重彩 (FCT) 請選擇冠亞兩匹不同馬號 (例如 1>2)")
+            h1, h2 = parts[0], parts[1]
+            selection_key = f"{h1}>{h2}"
+            r1 = next((ru for ru in race["runners"] if ru["horse_no"] == h1), None)
+            r2 = next((ru for ru in race["runners"] if ru["horse_no"] == h2), None)
+            if not r1 or not r2:
+                raise ValueError("找不到指定馬號")
+            ex_match = next(
+                (ex for ex in (race.get("exotic_recommendations") or []) if ex["selection_key"] == selection_key and ex["pool_type"] == "FORECAST"),
+                None,
+            )
+            if ex_match:
+                b2_p = ex_match["benter2_prob"]
+                b1_p = ex_match["harville1_prob"]
+                m_odds = ex_match["market_odds"]
+                ev = ex_match["ev_pct"]
+                rationale = ex_match["rationale"]
+            else:
+                m_odds = (race.get("_fct_odds_map") or {}).get(selection_key) or 30.0
+                b2_p = round(r1["benter2_prob"] * r2["benter2_prob"] / max(0.05, 1.0 - r1["benter2_prob"]), 4)
+                b1_p = round(b2_p * 0.85, 4)
+                ev = round((b2_p * m_odds - 1.0) * 100.0, 1)
+                rationale = "手動二重彩 (FCT) 策略注單"
+            c_odds = m_odds
+            label = f"#{h1} {r1['horse_name_ch']} 勝 → #{h2} {r2['horse_name_ch']} 亞 (二重彩 FCT)"
         else:
             parts = [int(x.strip()) for x in selection_key.split("-") if x.strip().isdigit()]
             if len(parts) != 2 or parts[0] == parts[1]:
@@ -2558,7 +2796,7 @@ class HkjcQuantEngine:
                 s_key = b_dict["selection_key"]
 
                 # Check if selection was scratched -> full refund
-                sel_nos = [int(x) for x in s_key.split("-") if x.isdigit()]
+                sel_nos = [int(x) for x in re.split(r"[-,>]", s_key) if x.isdigit()]
                 if any(h_no not in active_horse_nos for h_no in sel_nos):
                     conn.execute(
                         """
@@ -2577,6 +2815,15 @@ class HkjcQuantEngine:
                 div_per_10 = 0.0
                 win_map = dividends.get("WIN_MAP") or {str(winner_no): dividends["WIN"]["dividend_per_10"]}
                 qin_map = dividends.get("QUINELLA_MAP") or {top2_key: dividends["QUINELLA"]["dividend_per_10"]}
+                fct_default_key = f"{winner_no}>{second_no}"
+                fct_map = dividends.get("FORECAST_MAP") or {
+                    fct_default_key: (dividends.get("FORECAST") or {}).get("dividend_per_10", 0.0)
+                }
+                trio_sorted_top3 = sorted((winner_no, second_no, third_no))
+                trio_default_key = f"{trio_sorted_top3[0]}-{trio_sorted_top3[1]}-{trio_sorted_top3[2]}"
+                tri_map = dividends.get("TRIO_MAP") or {
+                    trio_default_key: (dividends.get("TRIO") or {}).get("dividend_per_10", 0.0)
+                }
 
                 if p_type == "WIN" and str(int(s_key)) in win_map:
                     won = True
@@ -2590,6 +2837,12 @@ class HkjcQuantEngine:
                 elif p_type == "PLACE_QUINELLA" and s_key in dividends["PLACE_QUINELLA"] and s_key in pq_keys:
                     won = True
                     div_per_10 = _parse_div_float(dividends["PLACE_QUINELLA"].get(s_key), 25.0)
+                elif p_type == "FORECAST" and s_key in fct_map:
+                    won = True
+                    div_per_10 = _parse_div_float(fct_map.get(s_key), 0.0)
+                elif p_type == "TRIO" and s_key in tri_map:
+                    won = True
+                    div_per_10 = _parse_div_float(tri_map.get(s_key), 0.0)
 
                 payout = round(stake * (div_per_10 / 10.0), 2) if won else 0.0
                 net_pnl = round(payout - stake, 2)
@@ -2791,11 +3044,17 @@ class HkjcQuantEngine:
         t_no = int(t_item["horse_no"])
         f_no = int(f_item["horse_no"])
 
-        # Parse official HKJC dividends from GraphQL `divs_raw` (including Dead-Heat support)
+        # Merge GraphQL `divs_raw` with `LocalResults.aspx` `parsed_divs` fallback
+        lr_parsed_divs = lr_cache.get("parsed_divs") or {}
+        merged_divs: Dict[str, List[Dict[str, Any]]] = {}
+        for p_code in ("WIN", "PLA", "QIN", "QPL", "FCT", "TRI", "TCE"):
+            merged_divs[p_code] = list(divs_raw.get(p_code) or lr_parsed_divs.get(p_code) or [])
+
+        # Parse official HKJC dividends (including Dead-Heat support + Forecast FCT + Trio TRI)
         place_pays_three = len(runners) >= 7
         win_div_10 = round(float(w_item["market_win_odds"]) * 10.0, 1)
         win_divs_map: Dict[str, float] = {}
-        for d in divs_raw.get("WIN") or []:
+        for d in merged_divs.get("WIN") or []:
             c_no = int(re.sub(r"\D", "", str(d.get("winComb", "0"))) or 0)
             if c_no > 0:
                 parsed_w = _parse_div_float(d.get("div"), win_div_10)
@@ -2806,7 +3065,7 @@ class HkjcQuantEngine:
             win_divs_map[str(w_no)] = win_div_10
 
         place_divs: Dict[str, float] = {}
-        for d in divs_raw.get("PLA") or []:
+        for d in merged_divs.get("PLA") or []:
             c_no = str(int(re.sub(r"\D", "", str(d.get("winComb", "0"))) or 0))
             place_divs[c_no] = _parse_div_float(d.get("div"), 15.0)
         place_items = (w_item, s_item, t_item) if place_pays_three else (w_item, s_item)
@@ -2819,7 +3078,7 @@ class HkjcQuantEngine:
         q_key = f"{min(w_no, s_no)}-{max(w_no, s_no)}"
         q_div_10 = round((race.get("_qin_odds_map", {}).get(q_key) or 25.0) * 10.0, 1)
         qin_divs_map: Dict[str, float] = {}
-        for d in divs_raw.get("QIN") or []:
+        for d in merged_divs.get("QIN") or []:
             parts = [int(x) for x in str(d.get("winComb", "")).split(",") if x.isdigit()]
             if len(parts) == 2:
                 k_pair = f"{min(parts[0], parts[1])}-{max(parts[0], parts[1])}"
@@ -2832,7 +3091,7 @@ class HkjcQuantEngine:
 
         pq_divs: Dict[str, float] = {}
         if place_pays_three:
-            for d in divs_raw.get("QPL") or []:
+            for d in merged_divs.get("QPL") or []:
                 parts = [int(x) for x in str(d.get("winComb", "")).split(",") if x.isdigit()]
                 if len(parts) == 2:
                     k_pair = f"{min(parts[0], parts[1])}-{max(parts[0], parts[1])}"
@@ -2841,6 +3100,37 @@ class HkjcQuantEngine:
                 k_pair = f"{min(a_no, b_no)}-{max(a_no, b_no)}"
                 if k_pair not in pq_divs:
                     pq_divs[k_pair] = round((race.get("_qpl_odds_map", {}).get(k_pair) or 10.0) * 10.0, 1)
+
+        # Official Forecast (二重彩 FCT) Dividend
+        fct_key = f"{w_no}>{s_no}"
+        fct_div_10 = round(((race.get("_fct_odds_map") or {}).get(fct_key) or (q_div_10 / 10.0 * 1.95)) * 10.0, 1)
+        fct_divs_map: Dict[str, float] = {}
+        for d in merged_divs.get("FCT") or []:
+            parts = [int(x) for x in str(d.get("winComb", "")).split(",") if x.isdigit()]
+            if len(parts) == 2:
+                k_fct = f"{parts[0]}>{parts[1]}"
+                parsed_f = _parse_div_float(d.get("div"), fct_div_10)
+                fct_divs_map[k_fct] = parsed_f
+                if k_fct == fct_key:
+                    fct_div_10 = parsed_f
+        if fct_key not in fct_divs_map:
+            fct_divs_map[fct_key] = fct_div_10
+
+        # Official Trio (單T TRI) Dividend
+        tri_sorted = sorted((w_no, s_no, t_no))
+        tri_key = f"{tri_sorted[0]}-{tri_sorted[1]}-{tri_sorted[2]}"
+        tri_div_10 = round(((race.get("_tri_odds_map") or {}).get(tri_key) or 45.0) * 10.0, 1)
+        tri_divs_map: Dict[str, float] = {}
+        for d in merged_divs.get("TRI") or []:
+            parts = sorted(int(x) for x in str(d.get("winComb", "")).split(",") if x.isdigit())
+            if len(parts) == 3:
+                k_tri = f"{parts[0]}-{parts[1]}-{parts[2]}"
+                parsed_t = _parse_div_float(d.get("div"), tri_div_10)
+                tri_divs_map[k_tri] = parsed_t
+                if k_tri == tri_key:
+                    tri_div_10 = parsed_t
+        if tri_key not in tri_divs_map:
+            tri_divs_map[tri_key] = tri_div_10
 
         # Describe actual pace & sectional scenario
         w_in_run = [int(x) for x in re.findall(r"\d+", w_item.get("in_running", ""))]
@@ -2866,6 +3156,10 @@ class HkjcQuantEngine:
                 "QUINELLA": {"combination": q_key, "dividend_per_10": q_div_10},
                 "QUINELLA_MAP": qin_divs_map,
                 "PLACE_QUINELLA": pq_divs,
+                "FORECAST": {"combination": fct_key, "dividend_per_10": fct_div_10},
+                "FORECAST_MAP": fct_divs_map,
+                "TRIO": {"combination": tri_key, "dividend_per_10": tri_div_10},
+                "TRIO_MAP": tri_divs_map,
             },
         }
 
@@ -3430,6 +3724,8 @@ class HkjcQuantEngine:
             "PLACE": "位置",
             "QUINELLA": "連贏",
             "PLACE_QUINELLA": "位置Q",
+            "FORECAST": "二重彩",
+            "TRIO": "單T",
         }
 
         with self.db._connect() as conn:

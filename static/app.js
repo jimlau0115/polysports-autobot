@@ -432,6 +432,8 @@
           <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">
             <span class="badge badge-outline mono-num">獨贏 #${divs.WIN?.horse_no}: HK$${divs.WIN?.dividend_per_10}</span>
             <span class="badge badge-outline mono-num">連贏 (${escapeHtml(divs.QUINELLA?.combination)}): HK$${divs.QUINELLA?.dividend_per_10}</span>
+            ${divs.FORECAST ? `<span class="badge badge-outline mono-num">二重彩 (${escapeHtml(divs.FORECAST.combination)}): HK$${divs.FORECAST.dividend_per_10}</span>` : ""}
+            ${divs.TRIO ? `<span class="badge badge-outline mono-num">單T (${escapeHtml(divs.TRIO.combination)}): HK$${divs.TRIO.dividend_per_10}</span>` : ""}
             ${Object.entries(divs.PLACE_QUINELLA || {})
               .map(([k, v]) => `<span class="badge badge-outline mono-num">位置Q (${escapeHtml(k)}): HK$${v}</span>`)
               .join("")}
@@ -650,6 +652,8 @@
       PLACE: "位置 PLA",
       QUINELLA: "連贏 QIN",
       PLACE_QUINELLA: "位置Q QPL",
+      FORECAST: "二重彩 FCT",
+      TRIO: "單T TRI",
     };
 
     listEl.innerHTML = filtered
@@ -789,6 +793,8 @@
       PLACE: "位置",
       QUINELLA: "連贏",
       PLACE_QUINELLA: "位置Q",
+      FORECAST: "二重彩",
+      TRIO: "單T",
     };
     const raceBets = (bets || []).filter((b) => b.race_id === race.race_id);
     const lines = [
