@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark" />
   <title>HKJC 顧鳴高 &amp; Bill Benter 2.0 實時賽馬量化分析與自進化系統</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261125_hkjc_v8" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261129_hkjc_v9" />
 </head>
 <body>
   <!-- =================================================================== -->
@@ -221,6 +221,25 @@
             <!-- Populated dynamically -->
           </div>
         </section>
+
+        <!-- E. Triple Trio (三T / 3T) Prediction & T-5m Leg-1 Auto-Push Panel -->
+        <section class="panel triple-trio-panel hidden" id="hkjc-triple-trio-panel" aria-labelledby="hkjc-tt-title">
+          <div class="panel-header">
+            <div class="panel-title-row">
+              <h2 class="panel-title" id="hkjc-tt-title">🎰 三T (Triple Trio / 3T) 跨關量化預測與膽拖組合</h2>
+              <span class="badge badge-accent" id="hkjc-tt-legs-badge">第 5・6・7 場</span>
+              <span class="badge badge-outline" id="hkjc-tt-status-badge">將於頭關前 5 分鐘鎖定並推播 TG</span>
+            </div>
+            <div class="panel-actions">
+              <button type="button" id="hkjc-push-tt-btn" class="btn btn-outline btn-sm">
+                📲 推送 3T 預測至 TG
+              </button>
+            </div>
+          </div>
+          <div id="hkjc-triple-trio-body" class="triple-trio-body">
+            <!-- Populated dynamically -->
+          </div>
+        </section>
       </div>
 
       <!-- Right Sidebar Column: Clean 3-Tab Panel (Bets Ledger | Model Weights & Evolution | Telegram Push Log) -->
@@ -336,6 +355,6 @@
     </div>
   </dialog>
 
-  <script src="/static/app.js?v=20261125_hkjc_v8" defer></script>
+  <script src="/static/app.js?v=20261129_hkjc_v9" defer></script>
 </body>
 </html>

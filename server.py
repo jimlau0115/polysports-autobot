@@ -585,6 +585,22 @@ class PolySportsServer:
         except Exception as exc:
             return web.json_response({"ok": False, "error": str(exc)}, status=400)
 
+    async def handle_hkjc_triple_trio_push(self, request: web.Request) -> web.Response:
+        try:
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            pool_id = body.get("pool_id")
+            push_res = await self.engine.hkjc.push_triple_trio_to_telegram(pool_id=pool_id)
+            raw_state = self.engine.get_full_state()
+            await self.broadcast_ws({"type": "STATE_UPDATE", "data": raw_state})
+            return web.json_response(
+                {"ok": True, "push": push_res, "hkjc": raw_state["hkjc"]}
+            )
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
     async def handle_hkjc_bet(self, request: web.Request) -> web.Response:
         try:
             body = await request.json()
@@ -780,6 +796,7 @@ def create_app() -> web.Application:
     app.router.add_post("/api/hkjc/sync", srv.handle_hkjc_sync)
     app.router.add_post("/api/hkjc/telegram/config", srv.handle_hkjc_telegram_config)
     app.router.add_post("/api/hkjc/telegram/push", srv.handle_hkjc_telegram_push)
+    app.router.add_post("/api/hkjc/triple-trio/push", srv.handle_hkjc_triple_trio_push)
     app.router.add_get("/ws", srv.handle_ws)
     app.router.add_static("/static/", path=str(STATIC_DIR), name="static")
     return app

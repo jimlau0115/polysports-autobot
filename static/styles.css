@@ -953,6 +953,121 @@ body {
 }
 
 /* ===================================================================== */
+/* TRIPLE TRIO (3T / 三T) PANEL & SUBGRID ALIGNED LEG CARDS              */
+/* ===================================================================== */
+.triple-trio-panel {
+  border-color: rgba(245, 158, 11, 0.42);
+  background: linear-gradient(165deg, rgba(17, 24, 39, 0.98) 0%, rgba(120, 53, 15, 0.14) 100%);
+}
+
+.triple-trio-body {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tt-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.tt-ticket-card {
+  container-type: inline-size;
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tt-ticket-card.tt-ticket-core {
+  border-color: rgba(16, 185, 129, 0.45);
+}
+
+.tt-ticket-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tt-ticket-card h3 {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.tt-ticket-code {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #fde68a;
+  word-break: break-word;
+}
+
+.tt-legs-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-rows: auto 1fr auto;
+  gap: 10px;
+}
+
+.tt-leg-card {
+  container-type: inline-size;
+  grid-row: span 3;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  grid-template-rows: subgrid;
+  gap: 8px;
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 11px 13px;
+}
+
+.tt-leg-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.tt-leg-card h3 {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.tt-leg-contenders {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+  color: #cbd5e1;
+}
+
+.tt-leg-contenders li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.tt-leg-card footer {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11.5px;
+}
+
+/* ===================================================================== */
 /* RIGHT SIDEBAR TABBED PANEL                                            */
 /* ===================================================================== */
 .side-tabs-header {

@@ -290,6 +290,7 @@
     renderPostRaceReport(selectedRace);
     renderRunnersTable(selectedRace);
     renderExoticGrid(selectedRace);
+    renderTripleTrio(hkjc.triple_trio);
     renderBetsSidebar(bets, selectedRace.race_id);
     renderModelSidebar(mState, evolutions);
     renderTelegramSidebar(hkjc.telegram || {}, hkjc.telegram_logs || [], selectedRace, bets);
@@ -630,6 +631,128 @@
       .join("");
   }
 
+  function renderTripleTrio(tt) {
+    const panel = $("hkjc-triple-trio-panel");
+    const body = $("hkjc-triple-trio-body");
+    if (!panel || !body) return;
+    if (!tt || !Array.isArray(tt.leg_races) || tt.leg_races.length !== 3) {
+      panel.classList.add("hidden");
+      body.innerHTML = "";
+      return;
+    }
+
+    panel.classList.remove("hidden");
+    const legsBadge = $("hkjc-tt-legs-badge");
+    if (legsBadge) {
+      legsBadge.textContent = `第 ${tt.leg_races.join("・")} 場 (頭關 ${tt.leg1_scheduled_time || ""} HKT)`;
+    }
+    const statusBadge = $("hkjc-tt-status-badge");
+    if (statusBadge) {
+      statusBadge.textContent = tt.status_label || "將於頭關前 5 分鐘鎖定並推播 TG";
+      statusBadge.className =
+        tt.status === "SETTLED_HIT" || tt.status === "LOCKED_AT_T5"
+          ? "badge badge-success"
+          : tt.status === "SETTLED_CONSOLATION" || tt.status === "IN_PROGRESS"
+          ? "badge badge-warning"
+          : "badge badge-outline";
+    }
+
+    const core = tt.core_ticket || {};
+    const bal = tt.balanced_ticket || {};
+    const jpVal = Number(tt.jackpot_hkd || 0);
+    const estVal = Number(tt.estimated_dividend_hkd || 0);
+    const invVal = Number(tt.pool_investment_hkd || 0);
+
+    const metaHtml = `
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12px;color:#cbd5e1;">
+        ${jpVal > 0 ? `<span class="badge badge-warning mono-num">💰 官方多寶 ${fmtHkd(jpVal)}</span>` : ""}
+        ${estVal > 0 ? `<span class="badge badge-success mono-num">🏆 頭獎估計派彩 ${fmtHkd(estVal)}</span>` : ""}
+        <span class="badge badge-outline mono-num">即時彩池投注額 ${fmtHkd(invVal)}</span>
+        <span class="badge badge-outline mono-num">模型版本 v${escapeHtml(tt.model_version || "2.0.0")}</span>
+        ${tt.official_dividends?.TT ? `<span class="badge badge-success mono-num">🏁 官方三T派彩 HK$${Number(tt.official_dividends.TT.dividend_per_10).toLocaleString()}</span>` : ""}
+        ${tt.official_dividends?.TT_CONSOL ? `<span class="badge badge-warning mono-num">🎖️ 安慰獎 HK$${Number(tt.official_dividends.TT_CONSOL.dividend_per_10).toLocaleString()}</span>` : ""}
+      </div>
+    `;
+
+    const summaryTickets = [
+      { cls: "tt-ticket-card tt-ticket-core", tagCls: "badge-success", data: core },
+      { cls: "tt-ticket-card", tagCls: "badge-accent", data: bal },
+    ];
+
+    const summaryHtml = `
+      <div class="tt-summary-grid">
+        ${summaryTickets
+          .map(({ cls, tagCls, data }) => `
+            <article class="${cls}">
+              <header>
+                <h3>${escapeHtml(data.label || "三T推薦")}</h3>
+                <span class="badge ${tagCls} mono-num">${data.total_combos || 0} 注 · ${escapeHtml(data.flexi_label || "")} · 共 ${fmtHkd(data.total_cost_hkd)}</span>
+              </header>
+              <p class="tt-ticket-code mono-num">${escapeHtml(data.ticket_code || "-")}</p>
+              <div class="mono-num" style="font-size:11.5px;color:#cbd5e1;">
+                正獎命中率 <strong style="color:#34d399;">${Number(data.full_hit_prob_pct || 0).toFixed(2)}%</strong> ·
+                安慰獎 <strong style="color:#fbbf24;">${Number(data.consolation_prob_pct || 0).toFixed(1)}%</strong> ·
+                相對公眾優勢 <strong style="color:#6ee7b7;">${Number(data.model_vs_pub_edge_pct || 0) >= 0 ? "+" : ""}${Number(data.model_vs_pub_edge_pct || 0).toFixed(1)}%</strong>
+              </div>
+            </article>
+          `)
+          .join("")}
+      </div>
+    `;
+
+    const legsDetail = tt.legs_detail || [];
+    const legOutcomes = tt.leg_outcomes || [];
+    const legsHtml = `
+      <div class="tt-legs-grid">
+        ${legsDetail
+          .map((ld, idx) => {
+            const cLeg = (core.legs || [])[idx] || {};
+            const bLeg = (bal.legs || [])[idx] || {};
+            const lo = legOutcomes[idx] || {};
+            let legBadge = `<span class="badge badge-outline">${escapeHtml(ld.competitiveness || "")}</span>`;
+            if (lo.finished) {
+              legBadge = lo.balanced_hit
+                ? `<span class="badge badge-success mono-num">✅ 過關 (${escapeHtml(lo.top3_key)})</span>`
+                : `<span class="badge badge-danger mono-num">❌ 實果 ${escapeHtml(lo.top3_key)}</span>`;
+            }
+            return `
+              <article class="tt-leg-card">
+                <header>
+                  <h3>第 ${ld.leg_no} 關 · 第 ${ld.race_no} 場 (${ld.distance_m}m)</h3>
+                  ${legBadge}
+                </header>
+                <ul class="tt-leg-contenders">
+                  ${(ld.top_contenders || [])
+                    .slice(0, 5)
+                    .map((c) => `
+                      <li>
+                        <span>
+                          <span class="hkjc-horse-num-pill">${c.horse_no}</span>
+                          <strong>${escapeHtml(c.horse_name_ch)}</strong>
+                          <small style="color:#94a3b8;">(${c.draw}檔 · ${escapeHtml(c.jockey)})</small>
+                        </span>
+                        <span class="mono-num">
+                          <strong style="color:#34d399;">${(Number(c.benter2_place_prob) * 100).toFixed(0)}%</strong>
+                          <small style="color:#fbbf24;"> ${c.market_win_odds}x</small>
+                        </span>
+                      </li>
+                    `)
+                    .join("")}
+                </ul>
+                <footer class="mono-num">
+                  <div>🎯 重心：<strong>${escapeHtml(cLeg.formula || "-")}</strong> (${cLeg.combos || 0}注 · ${(Number(cLeg.b2_hit_prob || 0) * 100).toFixed(1)}%)</div>
+                  <div>🛡️ 穩健：<strong>${escapeHtml(bLeg.formula || "-")}</strong> (${bLeg.combos || 0}注 · ${(Number(bLeg.b2_hit_prob || 0) * 100).toFixed(1)}%)</div>
+                </footer>
+              </article>
+            `;
+          })
+          .join("")}
+      </div>
+    `;
+
+    body.innerHTML = metaHtml + summaryHtml + legsHtml;
+  }
+
   function renderBetsSidebar(bets, currentRaceId) {
     if ($("hkjc-total-bets-count")) $("hkjc-total-bets-count").textContent = String(bets.length);
     const listEl = $("hkjc-bets-list");
@@ -873,10 +996,14 @@
           l.status === "ERROR" && l.error_detail
             ? `<div style="margin-top:6px;padding:6px 8px;border-radius:6px;background:rgba(244,63,94,0.14);border:1px solid rgba(244,63,94,0.4);color:#fda4af;font-size:11.5px;line-height:1.4;">${escapeHtml(l.error_detail)}</div>`
             : "";
+        const logTag =
+          l.msg_type === "TRIPLE_TRIO_LOCK" || l.msg_type === "TRIPLE_TRIO_STRATEGY"
+            ? `🎰 三T (頭關第 ${l.race_no} 場)`
+            : `第 ${l.race_no} 場`;
         return `
           <div class="pos-card">
             <div class="pos-header">
-              <span class="badge badge-outline">第 ${l.race_no} 場 · ${fmtTimeHkt(l.created_at)}</span>
+              <span class="badge badge-outline">${logTag} · ${fmtTimeHkt(l.created_at)}</span>
               ${stBadge}
             </div>
             ${errBox}
@@ -1179,6 +1306,20 @@
 
     $("hkjc-push-tg-btn")?.addEventListener("click", pushCurrentStrategyToTg);
     $("side-push-tg-btn")?.addEventListener("click", pushCurrentStrategyToTg);
+    $("hkjc-push-tt-btn")?.addEventListener("click", async () => {
+      const btn = $("hkjc-push-tt-btn");
+      if (btn) btn.disabled = true;
+      try {
+        const res = await apiPost("/api/hkjc/triple-trio/push", {});
+        renderHkjc(res.hkjc);
+        selectSideTab($("side-tab-tg"));
+        showToast(res.push?.message || "🎰 已觸發三T (3T) 預測推播至 Telegram！");
+      } catch (err) {
+        showToast(`❌ 3T 推播失敗：${err.message}`);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    });
 
     $("hkjc-tg-form")?.addEventListener("input", () => {
       settingsFormDirty = true;

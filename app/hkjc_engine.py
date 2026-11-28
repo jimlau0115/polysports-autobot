@@ -584,6 +584,8 @@ class HkjcQuantEngine:
         self._init_hkjc_tables()
         self.meeting_info: Dict[str, Any] = {}
         self.races: List[Dict[str, Any]] = []
+        self.triple_trio_pools: List[Dict[str, Any]] = []
+        self.triple_trio: Optional[Dict[str, Any]] = None
         self.jkc_points: Dict[str, float] = {}
         self.tnc_points: Dict[str, float] = {}
         self.last_sync_at: Optional[str] = None
@@ -691,11 +693,27 @@ class HkjcQuantEngine:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     race_id TEXT NOT NULL,
                     race_no INTEGER NOT NULL,
-                    msg_type TEXT NOT NULL, -- PRE_RACE_STRATEGY, POST_RACE_REPORT, TEST
+                    msg_type TEXT NOT NULL, -- PRE_RACE_STRATEGY, PRE_RACE_FINAL_LOCK, TRIPLE_TRIO_LOCK, POST_RACE_REPORT, TEST
                     status TEXT NOT NULL,   -- SENT, QUEUED_PREVIEW, ERROR
                     message_text TEXT NOT NULL,
                     error_detail TEXT DEFAULT '',
                     created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS hkjc_triple_trio_predictions (
+                    pool_id TEXT PRIMARY KEY,
+                    meeting_date TEXT NOT NULL,
+                    venue_code TEXT NOT NULL,
+                    leg_races_json TEXT NOT NULL,
+                    jackpot_hkd REAL DEFAULT 0.0,
+                    estimated_dividend_hkd REAL DEFAULT 0.0,
+                    pool_investment_hkd REAL DEFAULT 0.0,
+                    model_version TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'PREDICTING', -- PREDICTING, LOCKED_AT_T5, SETTLED
+                    locked_at TEXT,
+                    settled_at TEXT,
+                    updated_at TEXT NOT NULL
                 );
                 """
             )
@@ -900,7 +918,7 @@ class HkjcQuantEngine:
                                 "venueCode": venue,
                                 "foOddsTypes": ["JKC", "TNC"],
                                 "foFilter": ["top"],
-                                "resultOddsType": ["WIN", "PLA", "QIN", "QPL", "FCT", "TCE", "TRI"],
+                                "resultOddsType": ["WIN", "PLA", "QIN", "QPL", "FCT", "TCE", "TRI", "TT"],
                             },
                         },
                         timeout=12,
@@ -1090,6 +1108,8 @@ class HkjcQuantEngine:
             "二重彩": "FCT",
             "單T": "TRI",
             "三重彩": "TCE",
+            "三T": "TT",
+            "三T(安慰獎)": "TT_CONSOL",
         }
         for t in re.findall(r"<table[^>]*>(.*?)</table>", html, re.S):
             if "競賽事件" in t:
@@ -1143,6 +1163,62 @@ class HkjcQuantEngine:
             "total_investment_hkd": float(meeting.get("totalInvestment") or 0.0),
             "penetrometer": penetrometer,
         }
+
+        # Extract official Triple Trio (三T / TT) pool legs, jackpot & estimated dividend metadata
+        jp_by_tt_races: Dict[Tuple[int, ...], Dict[str, Any]] = {}
+        for jp in meeting.get("jpEsts") or []:
+            if jp.get("oddsType") == "TT":
+                legs = tuple(int(x) for x in ((jp.get("leg") or {}).get("races") or []))
+                if legs:
+                    jp_by_tt_races[legs] = jp
+
+        tt_pools: List[Dict[str, Any]] = []
+        seen_tt_legs = set()
+        for pinv in meeting.get("poolInvs") or []:
+            if pinv.get("oddsType") == "TT":
+                legs = [int(x) for x in ((pinv.get("leg") or {}).get("races") or [])]
+                if len(legs) == 3:
+                    t_key = tuple(legs)
+                    seen_tt_legs.add(t_key)
+                    jp_info = jp_by_tt_races.get(t_key) or {}
+                    try:
+                        inv_val = float(pinv.get("investment") or 0.0)
+                    except Exception:
+                        inv_val = 0.0
+                    try:
+                        jp_val = float(jp_info.get("jackpot") or 0.0)
+                    except Exception:
+                        jp_val = 0.0
+                    try:
+                        est_val = float(jp_info.get("estimatedDividend") or 0.0)
+                    except Exception:
+                        est_val = 0.0
+                    tt_pools.append(
+                        {
+                            "pool_id": str(pinv.get("id") or f"MTG_{m_date}_{venue}_TT_{legs[0]}"),
+                            "leg_races": legs,
+                            "status": str(pinv.get("status") or "OPEN"),
+                            "sell_status": str(pinv.get("sellStatus") or "START_SELL"),
+                            "investment_hkd": inv_val,
+                            "jackpot_hkd": jp_val,
+                            "estimated_dividend_hkd": est_val,
+                        }
+                    )
+        for t_key, jp_info in jp_by_tt_races.items():
+            if t_key not in seen_tt_legs and len(t_key) == 3:
+                legs = list(t_key)
+                tt_pools.append(
+                    {
+                        "pool_id": f"MTG_{m_date.replace('-', '')}_{venue}_TT_{legs[0]}",
+                        "leg_races": legs,
+                        "status": "DECLARED",
+                        "sell_status": "START_SELL",
+                        "investment_hkd": 0.0,
+                        "jackpot_hkd": float(jp_info.get("jackpot") or 0.0),
+                        "estimated_dividend_hkd": float(jp_info.get("estimatedDividend") or 0.0),
+                    }
+                )
+        self.triple_trio_pools = tt_pools
 
         # Audit Fix: When rolling over to a new race meeting date, reset the Fast Intraday Layer
         # (day_draw_bias, day_pace_bias, intraday_jockey_form, intraday_trainer_form) while
@@ -1517,6 +1593,7 @@ class HkjcQuantEngine:
         self._recompute_all_races()
         if self.get_config().get("auto_paper_bet_enabled", True):
             self.auto_place_paper_bets_for_open_races()
+        self.triple_trio = self._build_triple_trio_prediction()
 
     def _backfill_settled_race_from_lr_cache(
         self, race_obj: Dict[str, Any], settled_payload: Dict[str, Any], lr_cache: Dict[str, Any]
@@ -1780,6 +1857,7 @@ class HkjcQuantEngine:
                     first_open_assigned = True
                 else:
                     race["status"] = "UPCOMING"
+        self.triple_trio = self._build_triple_trio_prediction()
 
     def _evaluate_race_models(
         self, race: Dict[str, Any], model_state: Dict[str, Any], cfg: Dict[str, Any]
@@ -2063,6 +2141,7 @@ class HkjcQuantEngine:
         fct_h1_map: Dict[str, float] = {}
         tri_prob_map: Dict[str, float] = {}
         tri_h1_map: Dict[str, float] = {}
+        tri_pub_map: Dict[str, float] = {}
 
         place_affinity = []
         for idx, r in enumerate(runners):
@@ -2076,8 +2155,10 @@ class HkjcQuantEngine:
         for i in range(n):
             pi = b2_probs[i]
             pi_b1 = b1_probs[i]
+            pi_pub = pub_probs[i]
             denom2 = sum((b2_probs[k] ** theta_2) * place_affinity[k] for k in range(n) if k != i)
             denom2_b1 = max(1e-6, 1.0 - pi_b1)
+            denom2_pub = max(1e-6, 1.0 - pi_pub)
             if denom2 <= 0:
                 continue
             for j in range(n):
@@ -2086,6 +2167,7 @@ class HkjcQuantEngine:
                 p_j_given_i = ((b2_probs[j] ** theta_2) * place_affinity[j]) / denom2
                 p_ij = pi * p_j_given_i
                 p_ij_b1 = pi_b1 * (b1_probs[j] / denom2_b1)
+                p_ij_pub = pi_pub * (pub_probs[j] / denom2_pub)
                 p_second[j] += p_ij
 
                 hi, hj = runners[i]["horse_no"], runners[j]["horse_no"]
@@ -2102,6 +2184,7 @@ class HkjcQuantEngine:
                     if m != i and m != j
                 )
                 denom3_b1 = max(1e-6, 1.0 - pi_b1 - b1_probs[j])
+                denom3_pub = max(1e-6, 1.0 - pi_pub - pub_probs[j])
                 if denom3 <= 0:
                     continue
                 for m in range(n):
@@ -2110,6 +2193,7 @@ class HkjcQuantEngine:
                     p_m_given_ij = ((b2_probs[m] ** theta_3) * place_affinity[m]) / denom3
                     p_ijm = p_ij * p_m_given_ij
                     p_ijm_b1 = p_ij_b1 * (b1_probs[m] / denom3_b1)
+                    p_ijm_pub = p_ij_pub * (pub_probs[m] / denom3_pub)
                     if place_pays_three:
                         p_third[m] += p_ijm
 
@@ -2118,11 +2202,15 @@ class HkjcQuantEngine:
                     trio_key = f"{trio_sorted[0]}-{trio_sorted[1]}-{trio_sorted[2]}"
                     tri_prob_map[trio_key] = tri_prob_map.get(trio_key, 0.0) + p_ijm
                     tri_h1_map[trio_key] = tri_h1_map.get(trio_key, 0.0) + p_ijm_b1
+                    tri_pub_map[trio_key] = tri_pub_map.get(trio_key, 0.0) + p_ijm_pub
 
                     if place_pays_three:
                         for a_no, b_no in ((hi, hj), (hi, hm), (hj, hm)):
                             pq_str = f"{min(a_no, b_no)}-{max(a_no, b_no)}"
                             qpl_prob_map[pq_str] = qpl_prob_map.get(pq_str, 0.0) + p_ijm
+
+        race["_tri_prob_map"] = tri_prob_map
+        race["_tri_pub_map"] = tri_pub_map
 
         if place_pays_three:
             qpl_total = sum(qpl_prob_map.values())
@@ -3126,6 +3214,7 @@ class HkjcQuantEngine:
         self._recompute_all_races()
         if self.get_config().get("auto_paper_bet_enabled", True):
             self.auto_place_paper_bets_for_open_races()
+        self.triple_trio = self._build_triple_trio_prediction()
 
         return {
             "settled_race": settlement_payload,
@@ -3764,6 +3853,7 @@ class HkjcQuantEngine:
         with self.db._connect() as conn:
             conn.execute("DELETE FROM hkjc_paper_bets")
             conn.execute("DELETE FROM hkjc_race_results")
+            conn.execute("DELETE FROM hkjc_triple_trio_predictions")
             if reset_model_weights:
                 conn.execute("DELETE FROM hkjc_model_evolutions")
                 init_state = {**DEFAULT_MODEL_STATE, "updated_at": utc_now_iso()}
@@ -3778,6 +3868,7 @@ class HkjcQuantEngine:
         self._recompute_all_races()
         if self.get_config().get("auto_paper_bet_enabled", True):
             self.auto_place_paper_bets_for_open_races()
+        self.triple_trio = self._build_triple_trio_prediction()
         return self.get_state()
 
     def _has_final_locked_push(self, race_id: str) -> bool:
@@ -3788,13 +3879,510 @@ class HkjcQuantEngine:
             ).fetchone()
             return bool(row)
 
+    def _has_triple_trio_push(self, pool_id: str) -> bool:
+        with self.db._connect() as conn:
+            row = conn.execute(
+                "SELECT id FROM hkjc_telegram_logs WHERE race_id = ? AND msg_type = 'TRIPLE_TRIO_LOCK' AND status IN ('SENT', 'QUEUED_PREVIEW') LIMIT 1",
+                (pool_id,),
+            ).fetchone()
+            return bool(row)
+
+    @staticmethod
+    def _trio_keys_for_ticket(bankers: List[int], legs: List[int]) -> List[str]:
+        """Generates sorted 'a-b-c' Trio keys covered by a banker + legs or boxed ticket."""
+        from itertools import combinations
+
+        b_set = [int(x) for x in bankers]
+        l_set = [int(x) for x in legs if int(x) not in b_set]
+        keys: List[str] = []
+        if len(b_set) == 2:
+            for lg in l_set:
+                arr = sorted([b_set[0], b_set[1], lg])
+                keys.append(f"{arr[0]}-{arr[1]}-{arr[2]}")
+        elif len(b_set) == 1:
+            for c1, c2 in combinations(l_set, 2):
+                arr = sorted([b_set[0], c1, c2])
+                keys.append(f"{arr[0]}-{arr[1]}-{arr[2]}")
+        else:
+            for c1, c2, c3 in combinations(l_set, 3):
+                arr = sorted([c1, c2, c3])
+                keys.append(f"{arr[0]}-{arr[1]}-{arr[2]}")
+        return keys
+
+    def _evaluate_tt_leg_candidates(self, race: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Evaluates all structured Trio ticket candidates (2B+3L, 2B+4L, 1B+4L, 4-Box, 1B+5L, 5-Box)
+        for one Triple Trio leg using exact Discounted Harville Benter 2.0 Trio probabilities vs public Trio odds.
+        """
+        runners = race.get("runners") or []
+        tri_b2 = race.get("_tri_prob_map") or {}
+        tri_pub = race.get("_tri_pub_map") or {}
+        # Blend Top-3 place prob (primary) + Win prob (tie-breaker for solid banker horses)
+        ranked = sorted(
+            runners,
+            key=lambda x: (x.get("benter2_place_prob", 0.0) * 0.72 + x.get("benter2_prob", 0.0) * 0.28),
+            reverse=True,
+        )
+        top6 = ranked[: min(6, len(ranked))]
+        nos = [int(r["horse_no"]) for r in top6]
+        runner_map = {int(r["horse_no"]): r for r in runners}
+
+        options: List[Dict[str, Any]] = []
+        specs = []
+        if len(nos) >= 4:
+            specs.append(("4B", "4馬複式", [], nos[:4]))
+        if len(nos) >= 5:
+            specs.append(("2B3L", "雙膽拖3腳", nos[:2], nos[2:5]))
+            specs.append(("1B4L", "單膽拖4腳", nos[:1], nos[1:5]))
+            specs.append(("5B", "5馬複式", [], nos[:5]))
+        if len(nos) >= 6:
+            specs.append(("2B4L", "雙膽拖4腳", nos[:2], nos[2:6]))
+            specs.append(("1B5L", "單膽拖5腳", nos[:1], nos[1:6]))
+
+        for code, style_label, bankers, legs in specs:
+            keys = self._trio_keys_for_ticket(bankers, legs)
+            if not keys:
+                continue
+            combos = len(keys)
+            p_b2 = min(0.92, sum(tri_b2.get(k, 0.0) for k in keys))
+            p_pub = max(1e-5, min(0.92, sum(tri_pub.get(k, 0.0) for k in keys)))
+            edge_ratio = p_b2 / p_pub
+            fmt_str = (
+                f"{','.join(map(str, bankers))}膽拖{','.join(map(str, legs))}"
+                if bankers
+                else f"複式 {','.join(map(str, legs))}"
+            )
+            eff_compact = p_b2 / (combos ** 0.54)
+            eff_balanced = (p_b2 * (1.0 + 0.25 * max(-0.20, edge_ratio - 1.0))) / (combos ** 0.28)
+            options.append(
+                {
+                    "code": code,
+                    "style_label": style_label,
+                    "bankers": [int(x) for x in bankers],
+                    "legs": [int(x) for x in legs],
+                    "formula": fmt_str,
+                    "combos": combos,
+                    "b2_hit_prob": round(p_b2, 4),
+                    "pub_hit_prob": round(p_pub, 4),
+                    "edge_ratio": round(edge_ratio, 3),
+                    "eff_compact": eff_compact,
+                    "eff_balanced": eff_balanced,
+                    "covered_trios": keys,
+                }
+            )
+
+        compact_cands = [o for o in options if o["combos"] <= 4] or options
+        core_opt = max(compact_cands, key=lambda o: o["eff_compact"]) if compact_cands else None
+        bal_cands = [o for o in options if o["combos"] >= 6 and (not core_opt or o["code"] != core_opt["code"])] or [o for o in options if o["combos"] >= 4] or options
+        bal_opt = max(bal_cands, key=lambda o: o["eff_balanced"]) if bal_cands else core_opt
+
+        contenders = []
+        for idx, r in enumerate(top6[:5]):
+            contenders.append(
+                {
+                    "rank": idx + 1,
+                    "horse_no": int(r["horse_no"]),
+                    "horse_name_ch": r["horse_name_ch"],
+                    "draw": int(r["draw"]),
+                    "jockey": r["jockey"],
+                    "market_win_odds": r["market_win_odds"],
+                    "market_place_odds": r["market_place_odds"],
+                    "benter2_prob": r["benter2_prob"],
+                    "benter2_place_prob": r["benter2_place_prob"],
+                    "key_signals": r.get("key_signals") or [],
+                }
+            )
+
+        top1 = runner_map.get(nos[0]) if nos else None
+        top1_p_place = float(top1.get("benter2_place_prob", 0.0)) if top1 else 0.0
+        competitiveness = "強膽顯著" if top1_p_place >= 0.56 else "雙雄並立" if (len(nos) >= 2 and runner_map[nos[1]].get("benter2_place_prob", 0.0) >= 0.46) else "群雄混戰"
+
+        return {
+            "race_id": race["race_id"],
+            "race_no": int(race["race_no"]),
+            "race_name": race["race_name"],
+            "scheduled_time": race["scheduled_time"],
+            "post_time_iso": race["post_time_iso"],
+            "distance_m": int(race["distance_m"]),
+            "race_class": race.get("race_class") or "",
+            "has_live_odds": bool(race.get("has_live_odds")),
+            "competitiveness": competitiveness,
+            "core_option": core_opt,
+            "balanced_option": bal_opt,
+            "all_options": options,
+            "top_contenders": contenders,
+        }
+
+    def _compute_fresh_triple_trio_payload(self, pool_meta: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        leg_nos = pool_meta.get("leg_races") or []
+        if len(leg_nos) != 3:
+            return None
+        race_by_no = {int(r["race_no"]): r for r in self.races}
+        leg_races = [race_by_no.get(int(n)) for n in leg_nos]
+        if any(r is None for r in leg_races):
+            return None
+
+        leg_evals = [self._evaluate_tt_leg_candidates(r) for r in leg_races]
+        if any(not le["core_option"] for le in leg_evals):
+            return None
+
+        # Assemble Core Ticket (tight combos <= 64) and Balanced Ticket (combos capped <= 180)
+        core_legs = [dict(le["core_option"]) for le in leg_evals]
+        bal_legs = [dict(le["balanced_option"] or le["core_option"]) for le in leg_evals]
+        while (bal_legs[0]["combos"] * bal_legs[1]["combos"] * bal_legs[2]["combos"]) > 160:
+            # Step down the largest leg (with lowest hit probability per combo gain) to keep cost disciplined
+            idx_max = max(range(3), key=lambda i: (bal_legs[i]["combos"], -bal_legs[i]["b2_hit_prob"]))
+            smaller = [
+                o for o in leg_evals[idx_max]["all_options"]
+                if o["combos"] < bal_legs[idx_max]["combos"]
+            ]
+            if not smaller:
+                break
+            bal_legs[idx_max] = max(smaller, key=lambda o: o["eff_balanced"])
+
+        def _summarize_ticket(ticket_legs: List[Dict[str, Any]], label: str) -> Dict[str, Any]:
+            c_tot = max(1, ticket_legs[0]["combos"] * ticket_legs[1]["combos"] * ticket_legs[2]["combos"])
+            p1, p2, p3 = [max(1e-4, float(x["b2_hit_prob"])) for x in ticket_legs]
+            q1, q2, q3 = [max(1e-4, float(x["pub_hit_prob"])) for x in ticket_legs]
+            p_full = p1 * p2 * p3
+            p_consol = p1 * p2 * (1.0 - p3)
+            q_full = q1 * q2 * q3
+            edge_pct = ((p_full / max(1e-7, q_full)) - 1.0) * 100.0
+            jp = float(pool_meta.get("jackpot_hkd") or 0.0)
+            pool_inv = max(1500000.0, float(pool_meta.get("investment_hkd") or 0.0))
+            # Effective takeout after HK$2M+ carried-forward jackpot overlay
+            eff_payout_ratio = 0.75 + (jp / max(pool_inv, 2000000.0)) * 0.45
+            est_ev_pct = ((p_full / max(1e-7, q_full)) * eff_payout_ratio - 1.0) * 100.0
+
+            cfg = self.get_config()
+            bankroll = self._get_current_bankroll_hkd(cfg)
+            # Flexi Bet recommendation (HK$10 standard unit or HK$2 Flexi unit if budget fits)
+            max_tt_budget = max(40.0, min(1200.0, bankroll * 0.025))
+            if c_tot * 10.0 <= max_tt_budget:
+                unit_hkd = 10.0
+            elif c_tot * 5.0 <= max_tt_budget:
+                unit_hkd = 5.0
+            elif c_tot * 2.0 <= max_tt_budget:
+                unit_hkd = 2.0
+            else:
+                unit_hkd = 1.0
+            total_cost_hkd = round(c_tot * unit_hkd, 0)
+            flexi_str = "每注全注 HK$10" if unit_hkd >= 10 else f"彈性投注 HK${unit_hkd:g}/注"
+            return {
+                "label": label,
+                "total_combos": c_tot,
+                "unit_hkd": unit_hkd,
+                "flexi_label": flexi_str,
+                "total_cost_hkd": total_cost_hkd,
+                "full_hit_prob_pct": round(p_full * 100.0, 2),
+                "consolation_prob_pct": round(p_consol * 100.0, 2),
+                "pub_hit_prob_pct": round(q_full * 100.0, 2),
+                "model_vs_pub_edge_pct": round(edge_pct, 1),
+                "est_ev_pct": round(est_ev_pct, 1),
+                "legs": [
+                    {
+                        "leg_no": i + 1,
+                        "race_no": leg_evals[i]["race_no"],
+                        "bankers": ticket_legs[i]["bankers"],
+                        "legs": ticket_legs[i]["legs"],
+                        "formula": ticket_legs[i]["formula"],
+                        "style_label": ticket_legs[i]["style_label"],
+                        "combos": ticket_legs[i]["combos"],
+                        "b2_hit_prob": ticket_legs[i]["b2_hit_prob"],
+                        "covered_trios": ticket_legs[i]["covered_trios"],
+                    }
+                    for i in range(3)
+                ],
+                "ticket_code": f"R{leg_evals[0]['race_no']}:[{ticket_legs[0]['formula']}] × R{leg_evals[1]['race_no']}:[{ticket_legs[1]['formula']}] × R{leg_evals[2]['race_no']}:[{ticket_legs[2]['formula']}]",
+            }
+
+        core_ticket = _summarize_ticket(core_legs, "精選重心三T (Core)")
+        balanced_ticket = _summarize_ticket(bal_legs, "穩健護航三T (Balanced)")
+        leg1_r = leg_races[0]
+        mins_to_leg1 = _compute_minutes_to_post(leg1_r.get("post_time_iso", ""))
+        m_state = self.get_model_state()
+
+        return {
+            "pool_id": pool_meta["pool_id"],
+            "meeting_date": self.meeting_info.get("date", ""),
+            "venue_code": self.meeting_info.get("venue_code", ""),
+            "venue_name": self.meeting_info.get("venue_name", ""),
+            "leg_races": [int(x) for x in leg_nos],
+            "leg1_race_id": leg1_r["race_id"],
+            "leg1_post_time_iso": leg1_r.get("post_time_iso", ""),
+            "leg1_scheduled_time": leg1_r.get("scheduled_time", ""),
+            "minutes_to_leg1": mins_to_leg1,
+            "jackpot_hkd": float(pool_meta.get("jackpot_hkd") or 0.0),
+            "estimated_dividend_hkd": float(pool_meta.get("estimated_dividend_hkd") or 0.0),
+            "pool_investment_hkd": float(pool_meta.get("investment_hkd") or 0.0),
+            "sell_status": pool_meta.get("sell_status", "START_SELL"),
+            "model_version": m_state.get("version", "2.0.0"),
+            "day_draw_bias": float(m_state.get("day_draw_bias", 0.0)),
+            "day_pace_bias": float(m_state.get("day_pace_bias", 0.0)),
+            "status": "OBSERVING",
+            "status_label": (
+                f"⏱️ 距第 {leg_nos[0]} 場頭關開跑 {_format_minutes_countdown(mins_to_leg1)} · 將於頭關前 5 分鐘鎖定並推播 TG"
+                if (mins_to_leg1 is None or mins_to_leg1 > 5.5)
+                else "🎯 已進入三T頭關前 5 分鐘鎖定推播窗口"
+            ),
+            "legs_detail": [
+                {
+                    "leg_no": i + 1,
+                    "race_id": leg_evals[i]["race_id"],
+                    "race_no": leg_evals[i]["race_no"],
+                    "race_name": leg_evals[i]["race_name"],
+                    "scheduled_time": leg_evals[i]["scheduled_time"],
+                    "distance_m": leg_evals[i]["distance_m"],
+                    "race_class": leg_evals[i]["race_class"],
+                    "competitiveness": leg_evals[i]["competitiveness"],
+                    "has_live_odds": leg_evals[i]["has_live_odds"],
+                    "top_contenders": leg_evals[i]["top_contenders"],
+                }
+                for i in range(3)
+            ],
+            "core_ticket": core_ticket,
+            "balanced_ticket": balanced_ticket,
+            "leg_outcomes": [],
+            "official_dividends": {},
+        }
+
+    def _annotate_tt_live_outcomes(self, tt_payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Updates leg-by-leg pass/fail progress & official 三T/安慰獎 dividends against actual HKJC results."""
+        leg_nos = tt_payload.get("leg_races") or []
+        race_by_no = {int(r["race_no"]): r for r in self.races}
+        core_legs = (tt_payload.get("core_ticket") or {}).get("legs") or []
+        bal_legs = (tt_payload.get("balanced_ticket") or {}).get("legs") or []
+
+        leg_outcomes: List[Dict[str, Any]] = []
+        tt_divs: Dict[str, Any] = {}
+        all_legs_done = True
+
+        for i, r_no in enumerate(leg_nos):
+            r = race_by_no.get(int(r_no))
+            actual_top3: List[int] = []
+            if r:
+                # Extract actual top 3 from settlement or GraphQL _actual_final_pos
+                if r.get("status") == "SETTLED" and r.get("settlement"):
+                    st = r["settlement"]
+                    actual_top3 = sorted([int(st["winner_no"]), int(st["second_no"]), int(st["third_no"])])
+                else:
+                    fin = sorted(
+                        [ru for ru in r.get("runners", []) if ru.get("_actual_final_pos") in (1, 2, 3)],
+                        key=lambda x: x["_actual_final_pos"],
+                    )
+                    if len(fin) >= 3:
+                        actual_top3 = sorted(int(x["horse_no"]) for x in fin[:3])
+
+                # Check GraphQL divs & LocalResults parsed_divs for official TT dividends
+                for d_key, target_k in (("TT", "TT"), ("TT_CONSOL", "TT_CONSOL")):
+                    raw_list = (r.get("_official_divs_raw") or {}).get(d_key) or ((r.get("_lr_cache") or {}).get("parsed_divs") or {}).get(d_key) or []
+                    for item in raw_list:
+                        d_amt = _parse_div_float(item.get("div"), 0.0)
+                        if d_amt > 0:
+                            tt_divs[target_k] = {
+                                "combination": str(item.get("winComb") or ""),
+                                "dividend_per_10": d_amt,
+                            }
+
+            if len(actual_top3) == 3:
+                top3_key = f"{actual_top3[0]}-{actual_top3[1]}-{actual_top3[2]}"
+                core_cov = (core_legs[i].get("covered_trios") or []) if i < len(core_legs) else []
+                bal_cov = (bal_legs[i].get("covered_trios") or []) if i < len(bal_legs) else []
+                leg_outcomes.append(
+                    {
+                        "leg_no": i + 1,
+                        "race_no": int(r_no),
+                        "finished": True,
+                        "actual_top3": actual_top3,
+                        "top3_key": top3_key,
+                        "core_hit": top3_key in core_cov,
+                        "balanced_hit": top3_key in bal_cov,
+                    }
+                )
+            else:
+                all_legs_done = False
+                leg_outcomes.append(
+                    {
+                        "leg_no": i + 1,
+                        "race_no": int(r_no),
+                        "finished": False,
+                        "actual_top3": [],
+                        "top3_key": "",
+                        "core_hit": None,
+                        "balanced_hit": None,
+                    }
+                )
+
+        tt_payload["leg_outcomes"] = leg_outcomes
+        tt_payload["official_dividends"] = tt_divs
+
+        if leg_nos:
+            first_r = race_by_no.get(int(leg_nos[0]))
+            if first_r:
+                tt_payload["minutes_to_leg1"] = _compute_minutes_to_post(first_r.get("post_time_iso", ""))
+
+        if all_legs_done and len(leg_outcomes) == 3:
+            c1, c2, c3 = [lo["core_hit"] for lo in leg_outcomes]
+            b1, b2, b3 = [lo["balanced_hit"] for lo in leg_outcomes]
+            if b1 and b2 and b3:
+                tt_payload["status"] = "SETTLED_HIT"
+                tt_payload["status_label"] = "🏆 三T正獎全中！" + ("（重心注同中！）" if (c1 and c2 and c3) else "（護航組合命中！）")
+            elif (b1 and b2 and not b3) or (c1 and c2 and not c3):
+                tt_payload["status"] = "SETTLED_CONSOLATION"
+                tt_payload["status_label"] = "🎖️ 命中三T安慰獎 (前兩關過關)！"
+            else:
+                tt_payload["status"] = "SETTLED_MISSED"
+                hit_cnt = sum(1 for lo in leg_outcomes if lo["balanced_hit"])
+                tt_payload["status_label"] = f"🏁 本期三T已完賽（穩健組合過 {hit_cnt}/3 關）"
+        elif any(lo["finished"] for lo in leg_outcomes):
+            done_cnt = sum(1 for lo in leg_outcomes if lo["finished"])
+            hit_cnt = sum(1 for lo in leg_outcomes if lo["balanced_hit"])
+            tt_payload["status"] = "IN_PROGRESS"
+            tt_payload["status_label"] = f"🔥 三T進行中：已完成 {done_cnt}/3 關（暫過 {hit_cnt}/{done_cnt} 關）"
+
+        return tt_payload
+
+    def _build_triple_trio_prediction(self, force_lock: bool = False) -> Optional[Dict[str, Any]]:
+        if not self.triple_trio_pools or not self.races:
+            return None
+        pool_meta = self.triple_trio_pools[0]
+        pool_id = pool_meta["pool_id"]
+        now = utc_now_iso()
+
+        with self.db._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM hkjc_triple_trio_predictions WHERE pool_id = ?",
+                (pool_id,),
+            ).fetchone()
+
+        if row and row["status"] in ("LOCKED_AT_T5", "SETTLED") and not force_lock:
+            saved_payload = json.loads(row["payload_json"])
+            saved_payload["pool_investment_hkd"] = float(pool_meta.get("investment_hkd") or saved_payload.get("pool_investment_hkd") or 0.0)
+            saved_payload["jackpot_hkd"] = float(pool_meta.get("jackpot_hkd") or saved_payload.get("jackpot_hkd") or 0.0)
+            saved_payload["estimated_dividend_hkd"] = float(pool_meta.get("estimated_dividend_hkd") or saved_payload.get("estimated_dividend_hkd") or 0.0)
+            annotated = self._annotate_tt_live_outcomes(saved_payload)
+            if annotated.get("status", "").startswith("SETTLED") and row["status"] != "SETTLED":
+                with self.db._connect() as conn:
+                    conn.execute(
+                        "UPDATE hkjc_triple_trio_predictions SET status = 'SETTLED', settled_at = ?, payload_json = ?, updated_at = ? WHERE pool_id = ?",
+                        (now, json.dumps(annotated, ensure_ascii=False), now, pool_id),
+                    )
+            else:
+                if row["status"] == "LOCKED_AT_T5" and annotated.get("status") not in ("IN_PROGRESS", "SETTLED_HIT", "SETTLED_CONSOLATION", "SETTLED_MISSED"):
+                    annotated["status"] = "LOCKED_AT_T5"
+                    annotated["status_label"] = f"🔒 已於頭關開跑前 5 分鐘鎖定最終三T策略（{annotated.get('locked_at_hkt', '')} 推播 TG）"
+            return annotated
+
+        fresh = self._compute_fresh_triple_trio_payload(pool_meta)
+        if not fresh:
+            return None
+
+        # If Leg 1 already finished/started without lock row yet, preserve best available state
+        annotated = self._annotate_tt_live_outcomes(fresh)
+        save_status = "LOCKED_AT_T5" if force_lock else "PREDICTING"
+        if force_lock:
+            hkt_now = datetime.now(timezone(timedelta(hours=8))).strftime("%H:%M")
+            annotated["status"] = "LOCKED_AT_T5"
+            annotated["locked_at"] = now
+            annotated["locked_at_hkt"] = hkt_now
+            annotated["status_label"] = f"🔒 已於頭關前 5 分鐘鎖定最終三T預測（{hkt_now} HKT 推播 TG）"
+
+        with self.db._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO hkjc_triple_trio_predictions (
+                    pool_id, meeting_date, venue_code, leg_races_json,
+                    jackpot_hkd, estimated_dividend_hkd, pool_investment_hkd,
+                    model_version, payload_json, status, locked_at, settled_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    pool_id,
+                    annotated["meeting_date"],
+                    annotated["venue_code"],
+                    json.dumps(annotated["leg_races"]),
+                    annotated["jackpot_hkd"],
+                    annotated["estimated_dividend_hkd"],
+                    annotated["pool_investment_hkd"],
+                    annotated["model_version"],
+                    json.dumps(annotated, ensure_ascii=False),
+                    save_status,
+                    annotated.get("locked_at") if force_lock else (row["locked_at"] if row else None),
+                    annotated.get("settled_at") if save_status == "SETTLED" else None,
+                    now,
+                ),
+            )
+        return annotated
+
+    def _lock_triple_trio_prediction(self, pool_id: str) -> Optional[Dict[str, Any]]:
+        self.triple_trio = self._build_triple_trio_prediction(force_lock=True)
+        return self.triple_trio
+
+    def format_triple_trio_telegram_message(self, tt_pred: Optional[Dict[str, Any]] = None) -> str:
+        tt = tt_pred or self.triple_trio
+        if not tt:
+            raise ValueError("目前賽日尚無三T (3T) 彩池資訊")
+        legs_str = "・".join(f"第{r}場" for r in tt["leg_races"])
+        core = tt["core_ticket"]
+        bal = tt["balanced_ticket"]
+
+        lines = [
+            f"🎰 {tt['meeting_date']}｜{tt['venue_name']} 三T (3T) 臨場最終預測",
+            f"🏁 三T關口：{legs_str}（頭關 {tt['leg1_scheduled_time']} HKT 開跑 · T-5m 鎖定）",
+        ]
+        if tt.get("jackpot_hkd", 0) > 0 or tt.get("estimated_dividend_hkd", 0) > 0:
+            jp_m = tt["jackpot_hkd"] / 1e4
+            est_m = tt["estimated_dividend_hkd"] / 1e4
+            lines.append(f"💰 官方多寶：HK${jp_m:,.0f}萬｜頭獎估計派彩：HK${est_m:,.0f}萬")
+
+        lines.append("")
+        lines.append("🧬 【Gu-Benter 2.0 分關膽拖心水】")
+        for idx, ld in enumerate(tt.get("legs_detail") or []):
+            bal_l = bal["legs"][idx]
+            core_l = core["legs"][idx]
+            top_names = " / ".join(
+                f"#{c['horse_no']} {c['horse_name_ch']}({c['benter2_place_prob']*100:.0f}%)"
+                for c in (ld.get("top_contenders") or [])[:4]
+            )
+            lines.append(
+                f"第{idx+1}關 (R{ld['race_no']} {ld['distance_m']}m·{ld['competitiveness']})："
+            )
+            lines.append(f"  • 重心：{core_l['formula']} ({core_l['combos']}注 · 命中率 {core_l['b2_hit_prob']*100:.1f}%)")
+            lines.append(f"  • 穩健：{bal_l['formula']} ({bal_l['combos']}注 · 命中率 {bal_l['b2_hit_prob']*100:.1f}%)")
+            lines.append(f"  • 焦點馬：{top_names}")
+
+        lines.append("")
+        lines.append(
+            f"🎯 精選重心：{core['total_combos']} 注 ({core['flexi_label']} · 共 HK${core['total_cost_hkd']:,.0f})"
+            f"｜正獎機率 {core['full_hit_prob_pct']:.2f}% (安慰獎 {core['consolation_prob_pct']:.1f}%)"
+        )
+        lines.append(
+            f"🛡️ 穩健護航：{bal['total_combos']} 注 ({bal['flexi_label']} · 共 HK${bal['total_cost_hkd']:,.0f})"
+            f"｜正獎機率 {bal['full_hit_prob_pct']:.2f}% (模型優勢 +{bal['model_vs_pub_edge_pct']:.1f}%)"
+        )
+        return "\n".join(lines)
+
+    async def push_triple_trio_to_telegram(self, pool_id: Optional[str] = None) -> Dict[str, Any]:
+        tt = self.triple_trio or self._build_triple_trio_prediction()
+        if not tt:
+            raise ValueError("目前賽日尚無三T (3T) 預測資料")
+        msg_text = self.format_triple_trio_telegram_message(tt)
+        leg1_no = int((tt.get("leg_races") or [0])[0])
+        return await self.send_telegram_message(
+            text=msg_text,
+            race_id=tt["pool_id"],
+            race_no=leg1_no,
+            msg_type="TRIPLE_TRIO_STRATEGY",
+        )
+
     async def maybe_auto_progress(self) -> Optional[Dict[str, Any]]:
         """
         Periodically syncs live HKJC GraphQL data with adaptive frequency:
         1. Syncs every 18s when any race is within [-35m, +12m] of post time, else every 60s.
         2. When an upcoming race enters the 1–5 minute pre-post golden window (with live HKJC odds),
            forces an immediate live odds sync, locks the final +EV strategy bets, and pushes to Telegram!
-        3. When an earlier race transitions to official results on HKJC, automatically settles it
+        3. Around 5 minutes before Triple Trio (3T) Leg 1 starts, locks the final 3T ticket & pushes to Telegram!
+        4. When an earlier race transitions to official results on HKJC, automatically settles it
            and upgrades the model weights/biases for subsequent races!
         """
         cfg = self.get_config()
@@ -3834,6 +4422,34 @@ class HkjcQuantEngine:
                             race_id=target_race["race_id"],
                             race_no=int(target_race["race_no"]),
                             msg_type="PRE_RACE_FINAL_LOCK",
+                        )
+
+        # 2. Check if Triple Trio (3T) Leg 1 is within ~5 minutes of post time (0 <= mins <= 5.5m)
+        if self.triple_trio and self.triple_trio.get("leg_races"):
+            tt_pool_id = self.triple_trio["pool_id"]
+            leg1_no = int(self.triple_trio["leg_races"][0])
+            leg1_race = next((x for x in self.races if int(x["race_no"]) == leg1_no), None)
+            if leg1_race and leg1_race["status"] != "SETTLED":
+                has_leg1_res = any(ru.get("_actual_final_pos") == 1 for ru in leg1_race.get("runners", []))
+                mins_leg1 = _compute_minutes_to_post(leg1_race.get("post_time_iso", ""))
+                tt_win_mins = max(5.5, late_win_mins + 0.5)
+                if (
+                    not has_leg1_res
+                    and leg1_race.get("has_live_odds")
+                    and mins_leg1 is not None
+                    and 0.0 <= mins_leg1 <= tt_win_mins
+                    and not self._has_triple_trio_push(tt_pool_id)
+                ):
+                    await self.sync_live_hkjc_data(force_refresh_cards=False)
+                    locked_tt = self._lock_triple_trio_prediction(tt_pool_id)
+                    tg_cfg = self.get_telegram_config(mask_token=True)
+                    if locked_tt and tg_cfg.get("enabled", True):
+                        tt_msg = self.format_triple_trio_telegram_message(locked_tt)
+                        await self.send_telegram_message(
+                            text=tt_msg,
+                            race_id=tt_pool_id,
+                            race_no=leg1_no,
+                            msg_type="TRIPLE_TRIO_LOCK",
                         )
 
         if not cfg.get("auto_live_settle_enabled", True):
@@ -4271,6 +4887,7 @@ class HkjcQuantEngine:
             },
             "next_open_race_id": next_open_race["race_id"] if next_open_race else None,
             "races": clean_races,
+            "triple_trio": self.triple_trio,
             "paper_bets": bets,
             "evolutions": evolutions,
             "telegram": self.get_telegram_config(mask_token=True),
